@@ -1,6 +1,7 @@
 import { randomUUID as uuidv4 } from 'crypto';
 import { ConversationState } from '../types/conversation-state.enum';
 import { FeatureContext } from '../types/feature-context.enum';
+import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
 
 export interface VoiceMessage {
   id: string;
@@ -10,23 +11,45 @@ export interface VoiceMessage {
   metadata?: Record<string, any>;
 }
 
-export interface VoiceSession {
+@Entity('voice_sessions')
+export class VoiceSession {
+  @PrimaryColumn()
   id: string;
-  userId: string;
-  walletAddress?: string;
-  context: FeatureContext;
-  state: ConversationState;
-  messages: VoiceMessage[];
-  createdAt: Date;
-  lastActivityAt: Date;
-  /** Timestamp of the last voice:ping received; used for heartbeat timeout detection */
-  lastPingAt?: Date;
-  ttl: number; // Time to live in seconds
-  socketId?: string;
-  metadata?: Record<string, any>;
-}
 
-export class VoiceSessionFactory {
+  @Column()
+  @Index()
+  userId: string;
+
+  @Column({ nullable: true })
+  walletAddress?: string;
+
+  @Column({ type: 'varchar' })
+  context: FeatureContext;
+
+  @Column({ type: 'varchar' })
+  state: ConversationState;
+
+  @Column({ type: 'json' })
+  messages: VoiceMessage[];
+
+  @Column({ type: 'timestamptz' })
+  createdAt: Date;
+
+  @Column({ type: 'timestamptz' })
+  lastActivityAt: Date;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  lastPingAt?: Date;
+
+  @Column({ type: 'int' })
+  ttl: number;
+
+  @Column({ nullable: true })
+  socketId?: string;
+
+  @Column({ type: 'json', nullable: true })
+  metadata?: Record<string, any>;
+
   static create(
     userId: string,
     context: FeatureContext,
@@ -34,17 +57,17 @@ export class VoiceSessionFactory {
     metadata?: Record<string, any>,
   ): VoiceSession {
     const now = new Date();
-    return {
-      id: uuidv4(),
-      userId,
-      walletAddress,
-      context,
-      state: ConversationState.IDLE,
-      messages: [],
-      createdAt: now,
-      lastActivityAt: now,
-      ttl: 3600, // 1 hour default TTL
-      metadata,
-    };
+    const session = new VoiceSession();
+    session.id = uuidv4();
+    session.userId = userId;
+    session.walletAddress = walletAddress;
+    session.context = context;
+    session.state = ConversationState.IDLE;
+    session.messages = [];
+    session.createdAt = now;
+    session.lastActivityAt = now;
+    session.ttl = 3600;
+    session.metadata = metadata;
+    return session;
   }
 }

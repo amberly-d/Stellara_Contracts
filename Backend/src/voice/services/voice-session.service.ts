@@ -1,11 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { RedisService } from '../../redis/redis.service';
 import { ConversationStateMachineService } from './conversation-state-machine.service';
-import {
-  VoiceSession,
-  VoiceMessage,
-  VoiceSessionFactory,
-} from '../entities/voice-session.entity';
+import { VoiceSession, VoiceMessage } from '../entities/voice-session.entity';
 import { ConversationState } from '../types/conversation-state.enum';
 import { randomUUID as uuidv4 } from 'crypto';
 
@@ -22,15 +18,10 @@ export class VoiceSessionService implements OnModuleInit {
   // Redis key prefixes
   private readonly SESSION_PREFIX = 'voice:session:';
   private readonly USER_SESSIONS_PREFIX = 'voice:user:sessions:';
-  /**
-   * Stores the "active session pointer" for each user: voice:usersession:{userId} -> sessionId
-   * TTL = 10 minutes (AC-1), refreshed on every voice:ping.
-   */
   private readonly USER_ACTIVE_SESSION_PREFIX = 'voice:usersession:';
 
   private readonly SESSION_TTL = 3600; // 1 hour — full session lifetime
-  /** TTL for the active-session pointer key (AC-1: 10 minutes) */
-  private readonly USER_SESSION_POINTER_TTL = 600;
+  private readonly USER_SESSION_POINTER_TTL = 600; // 10 minutes (AC-1)
 
   constructor(
     private readonly redisService: RedisService,
@@ -59,7 +50,7 @@ export class VoiceSessionService implements OnModuleInit {
       );
     }
 
-    const session = VoiceSessionFactory.create(
+    const session = VoiceSession.create(
       userId,
       context,
       walletAddress,
@@ -182,7 +173,6 @@ export class VoiceSessionService implements OnModuleInit {
 
       await this.redisService.client.del(this.SESSION_PREFIX + sessionId);
       await this.removeUserSession(session.userId, sessionId);
-      // Also clean up the active-session pointer if it still points to this session
       await this.clearUserActiveSessionIfMatches(session.userId, sessionId);
 
       this.logger.log(`Terminated voice session ${sessionId}`);
@@ -228,13 +218,9 @@ export class VoiceSessionService implements OnModuleInit {
   }
 
   // ---------------------------------------------------------------------------
-  // AC-1 — Redis-backed user-session active pointer (voice:usersession:{userId})
+  // AC-1 — Redis-backed user-session active pointer
   // ---------------------------------------------------------------------------
 
-  /**
-   * Store or overwrite the active session pointer for a user.
-   * TTL = 10 minutes (AC-1). Refreshed on every voice:ping.
-   */
   async setUserActiveSession(userId: string, sessionId: string): Promise<void> {
     await this.redisService.client.setEx(
       this.USER_ACTIVE_SESSION_PREFIX + userId,
@@ -243,24 +229,18 @@ export class VoiceSessionService implements OnModuleInit {
     );
   }
 
-  /** Retrieve the currently active sessionId for a user, or null if expired/absent. */
   async getUserActiveSession(userId: string): Promise<string | null> {
     return this.redisService.client.get(
       this.USER_ACTIVE_SESSION_PREFIX + userId,
     );
   }
 
-  /** Remove the active-session pointer for a user (called on disconnect / terminate). */
   async deleteUserActiveSession(userId: string): Promise<void> {
     await this.redisService.client.del(
       this.USER_ACTIVE_SESSION_PREFIX + userId,
     );
   }
 
-  /**
-   * Refresh the 10-minute TTL on the active-session pointer.
-   * Called on every voice:ping (AC-1).
-   */
   async refreshUserSessionTTL(userId: string): Promise<void> {
     await this.redisService.refreshTTL(
       this.USER_ACTIVE_SESSION_PREFIX + userId,
@@ -272,10 +252,6 @@ export class VoiceSessionService implements OnModuleInit {
   // AC-2 — Heartbeat ping tracking
   // ---------------------------------------------------------------------------
 
-  /**
-   * Record the timestamp of the latest voice:ping for a session.
-   * The cleanup cron uses this to detect stale sessions.
-   */
   async updateLastPingAt(sessionId: string): Promise<boolean> {
     const session = await this.getSession(sessionId);
     if (!session) {
@@ -293,10 +269,6 @@ export class VoiceSessionService implements OnModuleInit {
   // Cleanup — AC-2 (stale) + existing TTL-based
   // ---------------------------------------------------------------------------
 
-  /**
-   * Scans all voice sessions and marks/terminates those whose last ping is older
-   * than HEARTBEAT_TIMEOUT_MS (60 seconds). Called by the cron job (AC-2, AC-3).
-   */
   async cleanupStaleSessions(): Promise<number> {
     const now = Date.now();
     let cleanedCount = 0;
@@ -310,7 +282,6 @@ export class VoiceSessionService implements OnModuleInit {
 
         const session = JSON.parse(sessionData) as VoiceSession;
 
-        // Skip sessions that are already terminated or stale
         if (
           session.state === ConversationState.TERMINATED ||
           session.state === ConversationState.STALE
@@ -318,7 +289,6 @@ export class VoiceSessionService implements OnModuleInit {
           continue;
         }
 
-        // Use lastPingAt if available, otherwise fall back to createdAt
         const lastPingMs = session.lastPingAt
           ? new Date(session.lastPingAt).getTime()
           : new Date(session.createdAt).getTime();
@@ -343,11 +313,6 @@ export class VoiceSessionService implements OnModuleInit {
     return cleanedCount;
   }
 
-  /**
-   * Scans all voice sessions and terminates those whose session-level TTL has
-   * elapsed (legacy TTL-field based check). Called by the cron job alongside
-   * cleanupStaleSessions.
-   */
   async cleanupExpiredSessions(): Promise<number> {
     const now = Date.now();
     let cleanedCount = 0;
@@ -361,7 +326,7 @@ export class VoiceSessionService implements OnModuleInit {
 
         const session = JSON.parse(sessionData);
         const lastActivity = new Date(session.lastActivityAt).getTime();
-        const ttl = session.ttl * 1000; // Convert to milliseconds
+        const ttl = session.ttl * 1000;
 
         if (now - lastActivity > ttl) {
           const sessionId = key.replace(this.SESSION_PREFIX, '');
@@ -417,10 +382,6 @@ export class VoiceSessionService implements OnModuleInit {
     );
   }
 
-  /**
-   * Clear the active-session pointer only if it currently points to the given
-   * sessionId. Prevents wiping a newer session when an old one is terminated.
-   */
   private async clearUserActiveSessionIfMatches(
     userId: string,
     sessionId: string,

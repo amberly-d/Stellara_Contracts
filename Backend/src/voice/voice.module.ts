@@ -9,13 +9,17 @@ import { SessionCleanupService } from './services/session-cleanup.service';
 import { LlmService } from './services/llm.service';
 import { QuotaService } from './services/quota.service';
 import { LlmCacheService } from './services/llm-cache.service';
-import { RedisModule } from '../redis/redis.module';
 import { VoiceJob } from './entities/voice-job.entity';
+import { VoiceSession } from './entities/voice-session.entity';
+import { AiUsageQuota } from '../ai/quota/quota.entity';
+import { JwtService } from '@nestjs/jwt';
+import { WsJwtAuthGuard } from '../auth/guards/ws-jwt-auth.guard';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
     RedisModule,
-    TypeOrmModule.forFeature([VoiceJob]),
+    TypeOrmModule.forFeature([VoiceSession, VoiceJob, AiUsageQuota]),
     BullModule.registerQueue({
       name: 'voice-processing',
     }),
@@ -29,6 +33,8 @@ import { VoiceJob } from './entities/voice-job.entity';
     LlmService,
     QuotaService,
     LlmCacheService,
+    JwtService,
+    WsJwtAuthGuard,
   ],
   exports: [
     VoiceSessionService,

@@ -8,16 +8,24 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Logger, UseGuards } from '@nestjs/common';
 import { VoiceSessionService } from './services/voice-session.service';
 import { StreamingResponseService } from './services/streaming-response.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { VoiceMessageDto } from './dto/voice-message.dto';
 import { SessionActionDto } from './dto/session-action.dto';
 import { ConversationState } from './types/conversation-state.enum';
+import { WsJwtAuthGuard } from '../auth/guards/ws-jwt-auth.guard';
+
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+  : ['http://localhost:3000', 'http://localhost:3001'];
 
 @WebSocketGateway({
-  cors: { origin: '*' },
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+  },
   namespace: '/voice',
 })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -32,29 +40,27 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   async handleConnection(client: Socket) {
-    const userId = client.handshake.auth.userId;
+    const userId = client.data.user?.sub || client.data.user?.userId;
     const sessionId = client.handshake.auth.sessionId;
+
+    if (!userId) {
+      this.logger.warn(`Voice client rejected: No user ID in token from ${client.id}`);
+      client.emit('voice:error', { message: 'Authentication failed' });
+      client.disconnect();
+      return;
+    }
 
     this.logger.log(`Voice client connected: ${client.id}, userId: ${userId}`);
 
-    if (userId && sessionId) {
-      // Resume existing session
+    if (sessionId) {
       const session = await this.voiceSessionService.getSession(sessionId);
       if (session && session.userId === userId) {
-        await this.voiceSessionService.updateSessionSocket(
-          sessionId,
-          client.id,
-        );
+        await this.voiceSessionService.updateSessionSocket(sessionId, client.id);
         await this.voiceSessionService.resumeSession(sessionId);
-
         client.join(sessionId);
-        // AC-1: restore the Redis-backed active-session pointer on reconnect
         await this.voiceSessionService.setUserActiveSession(userId, sessionId);
-
         client.emit('voice:resumed', { sessionId, state: session.state });
-        this.logger.log(
-          `Resumed voice session ${sessionId} for user ${userId}`,
-        );
+        this.logger.log(`Resumed voice session ${sessionId} for user ${userId}`);
       } else {
         client.emit('voice:error', { message: 'Invalid session' });
         client.disconnect();
@@ -63,59 +69,40 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleDisconnect(client: Socket) {
-    const userId = client.handshake.auth.userId;
+    const userId = client.data.user?.sub || client.data.user?.userId;
     const sessionId = client.handshake.auth.sessionId;
 
-    this.logger.log(
-      `Voice client disconnected: ${client.id}, userId: ${userId}`,
-    );
+    this.logger.log(`Voice client disconnected: ${client.id}, userId: ${userId}`);
 
     if (userId && sessionId) {
-      // Don't terminate session immediately — allow for reconnection.
-      // The Redis TTL on the active-session pointer will expire naturally (10 min)
-      // and the cron job will clean up truly stale sessions.
       await this.voiceSessionService.updateSessionState(
         sessionId,
         ConversationState.IDLE,
       );
-      // AC-1: remove the active-session pointer so other instances know the socket is gone
       await this.voiceSessionService.deleteUserActiveSession(userId);
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('voice:create-session')
-  async createSession(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() createSessionDto: CreateSessionDto,
-  ) {
+  async createSession(@ConnectedSocket() client: Socket, @MessageBody() createSessionDto: CreateSessionDto) {
     try {
-      const userId = client.handshake.auth.userId;
+      const userId = client.data.user?.sub || client.data.user?.userId;
       if (!userId) {
         client.emit('voice:error', { message: 'Authentication required' });
         return;
       }
 
-      // Check if user already has an active session
-      const existingSessions =
-        await this.voiceSessionService.getUserActiveSessions(userId);
+      const existingSessions = await this.voiceSessionService.getUserActiveSessions(userId);
       if (existingSessions.length > 0) {
         const existingSession = existingSessions[0];
-        await this.voiceSessionService.updateSessionSocket(
-          existingSession.id,
-          client.id,
-        );
+        await this.voiceSessionService.updateSessionSocket(existingSession.id, client.id);
         client.join(existingSession.id);
-        // AC-1: keep the Redis pointer in sync
-        await this.voiceSessionService.setUserActiveSession(
-          userId,
-          existingSession.id,
-        );
-
+        await this.voiceSessionService.setUserActiveSession(userId, existingSession.id);
         client.emit('voice:session-created', { session: existingSession });
         return;
       }
 
-      // Create new session — throws if the per-user limit is hit (AC-4)
       let session;
       try {
         session = await this.voiceSessionService.createSession(
@@ -137,7 +124,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.voiceSessionService.updateSessionSocket(session.id, client.id);
       client.join(session.id);
-      // AC-1: store the active-session pointer in Redis
       await this.voiceSessionService.setUserActiveSession(userId, session.id);
 
       client.emit('voice:session-created', { session });
@@ -148,16 +134,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('voice:message')
-  async handleMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() messageDto: VoiceMessageDto,
-  ) {
+  async handleMessage(@ConnectedSocket() client: Socket, @MessageBody() messageDto: VoiceMessageDto) {
     try {
-      const userId = client.handshake.auth.userId;
-      // AC-1: resolve the session via Redis instead of the in-memory Map
-      const sessionId =
-        await this.voiceSessionService.getUserActiveSession(userId);
+      const userId = client.data.user?.sub || client.data.user?.userId;
+      const sessionId = await this.voiceSessionService.getUserActiveSession(userId);
 
       if (!sessionId) {
         client.emit('voice:error', { message: 'No active session' });
@@ -170,33 +152,25 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      // Start streaming response
-      const streamId =
-        await this.streamingResponseService.startStreamingResponse(
-          this.server,
-          sessionId,
-          messageDto.content,
-        );
-
-      this.logger.log(
-        `Started streaming response ${streamId} for session ${sessionId}`,
+      const streamId = await this.streamingResponseService.startStreamingResponse(
+        this.server,
+        sessionId,
+        messageDto.content,
       );
+
+      this.logger.log(`Started streaming response ${streamId} for session ${sessionId}`);
     } catch (error) {
       this.logger.error('Error handling message:', error);
       client.emit('voice:error', { message: 'Failed to process message' });
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('voice:interrupt')
-  async handleInterrupt(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { streamId?: string },
-  ) {
+  async handleInterrupt(@ConnectedSocket() client: Socket, @MessageBody() data: { streamId?: string }) {
     try {
-      const userId = client.handshake.auth.userId;
-      // AC-1: resolve the session via Redis
-      const sessionId =
-        await this.voiceSessionService.getUserActiveSession(userId);
+      const userId = client.data.user?.sub || client.data.user?.userId;
+      const sessionId = await this.voiceSessionService.getUserActiveSession(userId);
 
       if (!sessionId) {
         client.emit('voice:error', { message: 'No active session' });
@@ -210,10 +184,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
 
       if (success) {
-        client.emit('voice:interrupt-acknowledged', {
-          sessionId,
-          streamId: data.streamId,
-        });
+        client.emit('voice:interrupt-acknowledged', { sessionId, streamId: data.streamId });
       } else {
         client.emit('voice:error', { message: 'Failed to interrupt' });
       }
@@ -223,16 +194,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('voice:action')
-  async handleSessionAction(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() actionDto: SessionActionDto,
-  ) {
+  async handleSessionAction(@ConnectedSocket() client: Socket, @MessageBody() actionDto: SessionActionDto) {
     try {
-      const userId = client.handshake.auth.userId;
-      // AC-1: resolve the session via Redis
-      const sessionId =
-        await this.voiceSessionService.getUserActiveSession(userId);
+      const userId = client.data.user?.sub || client.data.user?.userId;
+      const sessionId = await this.voiceSessionService.getUserActiveSession(userId);
 
       if (!sessionId) {
         client.emit('voice:error', { message: 'No active session' });
@@ -240,23 +207,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       if (actionDto.interrupt) {
-        await this.streamingResponseService.interruptStream(
-          this.server,
-          sessionId,
-        );
+        await this.streamingResponseService.interruptStream(this.server, sessionId);
       }
 
       if (actionDto.state) {
-        const success = await this.voiceSessionService.updateSessionState(
-          sessionId,
-          actionDto.state,
-        );
-
+        const success = await this.voiceSessionService.updateSessionState(sessionId, actionDto.state);
         if (success) {
-          client.emit('voice:state-updated', {
-            sessionId,
-            state: actionDto.state,
-          });
+          client.emit('voice:state-updated', { sessionId, state: actionDto.state });
         } else {
           client.emit('voice:error', { message: 'Invalid state transition' });
         }
@@ -267,38 +224,27 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('voice:terminate')
   async handleTerminate(@ConnectedSocket() client: Socket) {
     try {
-      const userId = client.handshake.auth.userId;
-      // AC-1: resolve the session via Redis
-      const sessionId =
-        await this.voiceSessionService.getUserActiveSession(userId);
+      const userId = client.data.user?.sub || client.data.user?.userId;
+      const sessionId = await this.voiceSessionService.getUserActiveSession(userId);
 
       if (!sessionId) {
         client.emit('voice:error', { message: 'No active session' });
         return;
       }
 
-      // Interrupt any active streams
-      await this.streamingResponseService.interruptStream(
-        this.server,
-        sessionId,
-      );
+      await this.streamingResponseService.interruptStream(this.server, sessionId);
 
-      // Terminate session (also clears the active-session pointer)
-      const success =
-        await this.voiceSessionService.terminateSession(sessionId);
+      const success = await this.voiceSessionService.terminateSession(sessionId);
 
       if (success) {
         client.leave(sessionId);
-        // AC-1: explicit pointer removal (terminateSession also handles this,
-        // but we remove here for defence-in-depth)
         await this.voiceSessionService.deleteUserActiveSession(userId);
         client.emit('voice:terminated', { sessionId });
-        this.logger.log(
-          `Terminated voice session ${sessionId} for user ${userId}`,
-        );
+        this.logger.log(`Terminated voice session ${sessionId} for user ${userId}`);
       } else {
         client.emit('voice:error', { message: 'Failed to terminate session' });
       }
@@ -308,18 +254,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('voice:ping')
   async handlePing(@ConnectedSocket() client: Socket) {
-    const userId = client.handshake.auth.userId;
-    // AC-1: resolve the session via Redis
-    const sessionId =
-      await this.voiceSessionService.getUserActiveSession(userId);
+    const userId = client.data.user?.sub || client.data.user?.userId;
+    const sessionId = await this.voiceSessionService.getUserActiveSession(userId);
 
     if (sessionId) {
-      // Update session last activity and heartbeat timestamp (AC-2)
       await this.voiceSessionService.updateSessionSocket(sessionId, client.id);
       await this.voiceSessionService.updateLastPingAt(sessionId);
-      // AC-1: refresh the 10-minute TTL on the active-session pointer
       await this.voiceSessionService.refreshUserSessionTTL(userId);
     }
 
