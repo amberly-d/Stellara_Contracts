@@ -9,7 +9,7 @@ use shared::governance::ProposalStatus;
 use social_rewards::SocialRewardsContract;
 use soroban_sdk::{
     contract, contractimpl, contracttype,
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events, Ledger},
     token, Address, Env, String, Symbol, Vec,
 };
 use trading::UpgradeableTradingContract;
