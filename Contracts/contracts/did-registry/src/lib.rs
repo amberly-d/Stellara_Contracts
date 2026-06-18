@@ -3,6 +3,11 @@ use soroban_sdk::{
     contracterror, require_auth
 };
 use shared::governance::{GovernanceManager, GovernanceRole};
+use shared::events::{
+    extended_topics,
+    DidCreatedEvent, DidUpdatedEvent, DidDeactivatedEvent,
+    VerificationMethodAddedEvent, ServiceAddedEvent,
+};
 
 // DID Document structure
 #[contracttype]
@@ -86,7 +91,7 @@ impl DIDRegistryContract {
         env.storage().persistent().set(&roles_key, &role_map);
         
         // Initialize DID counter
-        let counter_key = symbol_short!("did_counter");
+        let counter_key = symbol_short!("did_cnt");
         env.storage().persistent().set(&counter_key, &0u64);
     }
 
@@ -136,9 +141,19 @@ impl DIDRegistryContract {
         env.storage().persistent().set(&dids_key, &dids);
 
         // Update counter
-        let counter_key = symbol_short!("did_counter");
+        let counter_key = symbol_short!("did_cnt");
         let count: u64 = env.storage().persistent().get(&counter_key).unwrap_or(0);
         env.storage().persistent().set(&counter_key, &(count + 1));
+
+        env.events().publish(
+            (extended_topics::DID_CREATED,),
+            DidCreatedEvent {
+                did: did_id.clone(),
+                controller: stellar_address,
+                method: symbol_short!("stellar"),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         did_id
     }
@@ -194,9 +209,19 @@ impl DIDRegistryContract {
         env.storage().persistent().set(&dids_key, &dids);
 
         // Update counter
-        let counter_key = symbol_short!("did_counter");
+        let counter_key = symbol_short!("did_cnt");
         let count: u64 = env.storage().persistent().get(&counter_key).unwrap_or(0);
         env.storage().persistent().set(&counter_key, &(count + 1));
+
+        env.events().publish(
+            (extended_topics::DID_CREATED,),
+            DidCreatedEvent {
+                did: did_id.clone(),
+                controller: env.current_contract_address(),
+                method: symbol_short!("key"),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         did_id
     }
@@ -251,8 +276,17 @@ impl DIDRegistryContract {
             .get(&dids_key)
             .unwrap_or_else(|| Map::new(&env));
 
-        dids.set(did, document);
+        dids.set(did.clone(), document);
         env.storage().persistent().set(&dids_key, &dids);
+
+        env.events().publish(
+            (extended_topics::DID_UPDATED,),
+            DidUpdatedEvent {
+                did,
+                controller: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     // Deactivate DID
@@ -280,8 +314,17 @@ impl DIDRegistryContract {
             .get(&dids_key)
             .unwrap_or_else(|| Map::new(&env));
 
-        dids.set(did, document);
+        dids.set(did.clone(), document);
         env.storage().persistent().set(&dids_key, &dids);
+
+        env.events().publish(
+            (extended_topics::DID_DEACTIVATED,),
+            DidDeactivatedEvent {
+                did,
+                deactivated_by: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     // Add verification method
@@ -321,8 +364,18 @@ impl DIDRegistryContract {
             .get(&dids_key)
             .unwrap_or_else(|| Map::new(&env));
 
-        dids.set(did, document);
+        dids.set(did.clone(), document);
         env.storage().persistent().set(&dids_key, &dids);
+
+        env.events().publish(
+            (extended_topics::VERIF_METHOD_ADDED,),
+            VerificationMethodAddedEvent {
+                did: did.clone(),
+                method_id: verification_method.id.clone(),
+                controller: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     // Add service
@@ -346,7 +399,7 @@ impl DIDRegistryContract {
             }
         }
 
-        document.service.push_back(service);
+        document.service.push_back(service.clone());
         document.updated_at = env.ledger().timestamp();
 
         // Store updated document
@@ -357,8 +410,18 @@ impl DIDRegistryContract {
             .get(&dids_key)
             .unwrap_or_else(|| Map::new(&env));
 
-        dids.set(did, document);
+        dids.set(did.clone(), document);
         env.storage().persistent().set(&dids_key, &dids);
+
+        env.events().publish(
+            (extended_topics::SERVICE_ADDED,),
+            ServiceAddedEvent {
+                did,
+                service_id: service.id,
+                controller: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     // Get DID document (internal helper)
@@ -391,7 +454,7 @@ impl DIDRegistryContract {
 
     // Get DID count
     pub fn get_did_count(env: Env) -> u64 {
-        let counter_key = symbol_short!("did_counter");
+        let counter_key = symbol_short!("did_cnt");
         env.storage().persistent().get(&counter_key).unwrap_or(0)
     }
 }

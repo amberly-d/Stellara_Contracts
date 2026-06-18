@@ -2,6 +2,10 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
 };
+use shared::events::{
+    extended_topics,
+    TcrApplicationEvent, TcrChallengedEvent, TcrVotedEvent, TcrResolvedEvent,
+};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,18 +55,29 @@ impl TCRContract {
         listing_count += 1;
 
         let listing = Listing {
-            applicant,
+            applicant: applicant.clone(),
             deposit,
-            metadata,
+            metadata: metadata.clone(),
             status: ListingStatus::Pending,
             challenge_id: 0,
-            expiry: env.ledger().timestamp() + 604800, // 7 days challenge period
+            expiry: env.ledger().timestamp() + 604800,
         };
 
         env.storage().instance().set(&listing_count, &listing);
         env.storage()
             .instance()
             .set(&symbol_short!("L_COUNT"), &listing_count);
+
+        env.events().publish(
+            (extended_topics::TCR_APPLIED,),
+            TcrApplicationEvent {
+                listing_id: listing_count,
+                applicant,
+                deposit,
+                metadata,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         listing_count
     }
@@ -94,7 +109,7 @@ impl TCRContract {
             deposit,
             votes_for: 0,
             votes_against: 0,
-            end_time: env.ledger().timestamp() + 604800, // 7 days voting period
+            end_time: env.ledger().timestamp() + 604800,
             resolved: false,
         };
 
@@ -106,6 +121,17 @@ impl TCRContract {
         env.storage()
             .instance()
             .set(&symbol_short!("C_COUNT"), &challenge_count);
+
+        env.events().publish(
+            (extended_topics::TCR_CHALLENGED,),
+            TcrChallengedEvent {
+                challenge_id: challenge_count,
+                listing_id,
+                challenger,
+                deposit,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         challenge_count
     }
@@ -132,12 +158,22 @@ impl TCRContract {
 
         env.storage().instance().set(&challenge_id, &challenge);
 
-        // Track voter stake (simplified)
-        let key = (voter, challenge_id);
+        let key = (voter.clone(), challenge_id);
         let current_stake: i128 = env.storage().instance().get(&key).unwrap_or(0);
         env.storage()
             .instance()
             .set(&key, &(current_stake + amount));
+
+        env.events().publish(
+            (extended_topics::TCR_VOTED,),
+            TcrVotedEvent {
+                challenge_id,
+                voter,
+                side,
+                weight: amount,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     pub fn resolve(env: Env, listing_id: u32) {
@@ -146,6 +182,8 @@ impl TCRContract {
             .instance()
             .get(&listing_id)
             .expect("Listing not found");
+
+        let accepted;
 
         if listing.status == ListingStatus::Challenged {
             let mut challenge: Challenge = env
@@ -161,10 +199,10 @@ impl TCRContract {
 
             if challenge.votes_for > challenge.votes_against {
                 listing.status = ListingStatus::Approved;
-                // Applicant and voters for win
+                accepted = true;
             } else {
                 listing.status = ListingStatus::Rejected;
-                // Challenger and voters against win (slashing)
+                accepted = false;
             }
 
             challenge.resolved = true;
@@ -177,8 +215,22 @@ impl TCRContract {
                 "Challenge period active"
             );
             listing.status = ListingStatus::Approved;
+            accepted = true;
+        } else {
+            return;
         }
 
+        let challenge_id = listing.challenge_id;
         env.storage().instance().set(&listing_id, &listing);
+
+        env.events().publish(
+            (extended_topics::TCR_RESOLVED,),
+            TcrResolvedEvent {
+                listing_id,
+                challenge_id,
+                accepted,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 }

@@ -140,7 +140,7 @@ impl ParametricInsuranceContract {
         Self::require_admin_auth(&env, &admin)?;
         InsuranceStorage::set_paused(&env, false);
         env.events()
-            .publish((symbol_short!("ins_unpause"),), (admin, env.ledger().timestamp()));
+            .publish((symbol_short!("ins_unpz"),), (admin, env.ledger().timestamp()));
         Ok(())
     }
 
@@ -333,7 +333,7 @@ impl ParametricInsuranceContract {
         InsuranceStorage::set_pool(&env, &pool);
 
         env.events().publish(
-            (symbol_short!("pol_create"),),
+            (symbol_short!("pol_crt"),),
             (
                 policy_id,
                 policyholder,
@@ -384,7 +384,7 @@ impl ParametricInsuranceContract {
         InsuranceStorage::set_policy(&env, &policy);
 
         env.events().publish(
-            (symbol_short!("pol_cancel"),),
+            (symbol_short!("pol_cnl"),),
             (policy_id, policyholder, env.ledger().timestamp()),
         );
 
@@ -490,7 +490,7 @@ impl ParametricInsuranceContract {
         );
 
         env.events().publish(
-            (symbol_short!("claim_paid"),),
+            (symbol_short!("clm_paid"),),
             (
                 policy_id,
                 policy.policyholder,
@@ -605,7 +605,7 @@ impl ParametricInsuranceContract {
         InsuranceStorage::set_policy(env, policy);
 
         env.events().publish(
-            (symbol_short!("pol_expire"),),
+            (symbol_short!("pol_exp"),),
             (policy.id, policy.policyholder.clone(), env.ledger().timestamp()),
         );
     }

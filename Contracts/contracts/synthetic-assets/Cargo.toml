@@ -12,6 +12,7 @@ testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
 soroban-sdk = { version = "=20.5.0", default-features = false }
+shared = { path = "../../shared" }
 
 [dev-dependencies]
 soroban-sdk = { version = "=20.5.0", features = ["testutils"], default-features = false }

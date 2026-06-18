@@ -21,3 +21,4 @@ trading = { path = "../contracts/trading", features = ["testutils"] }
 messaging = { path = "../contracts/messaging", features = ["testutils"] }
 cross-chain-router = { path = "../contracts/cross-chain-router", features = ["testutils"] }
 shared = { path = "../shared" }
+upgradeability = { path = "../contracts/upgradeability" }

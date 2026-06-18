@@ -13,6 +13,7 @@ pub struct ContractConfig {
 
 pub mod acl;
 pub mod circuit_breaker;
+pub mod events;
 pub mod fees;
 pub mod governance;
 pub mod nonce;

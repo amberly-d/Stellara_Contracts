@@ -1438,6 +1438,20 @@ impl UpgradeableTradingContract {
         trader.require_auth();
         require_initialized(&env)?;
 
+        // Validate inputs - commitments and proof hash should not be all zeros
+        if proof_hash.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidSolvencyProof);
+        }
+        if assets_commitment.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidSolvencyProof);
+        }
+        if liabilities_commitment.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidSolvencyProof);
+        }
+        if balance_commitment.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidSolvencyProof);
+        }
+
         let now = env.ledger().timestamp();
         let ttl_secs: u64 = env
             .storage()
@@ -1480,6 +1494,11 @@ impl UpgradeableTradingContract {
         trader.require_auth();
         require_initialized(&env)?;
 
+        // Validate commitment is not all zeros
+        if commitment.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidCommitment);
+        }
+
         let record_key = (symbol_short!("prv_bal"), trader.clone());
         let nonce: u64 = env
             .storage()
@@ -1515,6 +1534,20 @@ impl UpgradeableTradingContract {
     ) -> Result<u64, TradeError> {
         trader.require_auth();
         require_initialized(&env)?;
+
+        // Validate inputs
+        if price <= 0 {
+            return Err(TradeError::InvalidPrice);
+        }
+        if amount_commitment.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidCommitment);
+        }
+        if balance_commitment.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidCommitment);
+        }
+        if solvency_proof_hash.to_array().iter().all(|&b| b == 0) {
+            return Err(TradeError::InvalidSolvencyProof);
+        }
 
         // Verify solvency proof
         let solv_key = (symbol_short!("solv_prf"), trader.clone());

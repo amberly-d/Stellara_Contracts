@@ -298,6 +298,68 @@ export APPROVER_3="G..."
 export EXECUTOR_ADDRESS="G..."
 ```
 
+## Event Schema
+
+All on-chain state changes emit standardised events via `shared::events`. Off-chain indexers and the subgraph subscribe to these topics to power dashboards, notifications, and audit trails.
+
+### Topic Reference
+
+| Topic constant | `symbol_short` value | Emitting contract(s) | Payload struct |
+|---|---|---|---|
+| `TRADE_EXECUTED` | `trade` | trading | `TradeExecutedEvent` |
+| `FEE_COLLECTED` | `fee` | trading, liquidity-mining | `FeeCollectedEvent` |
+| `CONTRACT_PAUSED` | `paused` | trading, amm, parametric-insurance | `ContractPausedEvent` |
+| `CONTRACT_UNPAUSED` | `unpause` | trading, amm, parametric-insurance | `ContractUnpausedEvent` |
+| `PROPOSAL_CREATED` | `propose` | trading, messaging, amm, stablecoin-reserve | `ProposalCreatedEvent` |
+| `PROPOSAL_APPROVED` | `approve` | trading, messaging, amm, stablecoin-reserve | `ProposalApprovedEvent` |
+| `PROPOSAL_REJECTED` | `reject` | trading, messaging, amm, stablecoin-reserve | `ProposalRejectedEvent` |
+| `PROPOSAL_EXECUTED` | `execute` | trading, messaging, amm, stablecoin-reserve | `ProposalExecutedEvent` |
+| `PROPOSAL_CANCELLED` | `cancel` | trading, messaging, amm, stablecoin-reserve | `ProposalCancelledEvent` |
+| `REWARD_ADDED` | `reward` | social-rewards | `RewardAddedEvent` |
+| `REWARD_CLAIMED` | `claimed` | social-rewards | `RewardClaimedEvent` |
+| `POLICY_CREATED` | `pol_crt` | parametric-insurance | `PolicyCreatedEvent` |
+| `POLICY_CANCELLED` | `pol_cnl` | parametric-insurance | `PolicyCancelledEvent` |
+| `POLICY_EXPIRED` | `pol_exp` | parametric-insurance | `PolicyExpiredEvent` |
+| `TRIGGER_ACTIVATED` | `trig_act` | parametric-insurance | `TriggerActivatedEvent` |
+| `CLAIM_PAID` | `clm_paid` | parametric-insurance | `ClaimPaidEvent` |
+| `LIQUIDITY_DEPOSITED` | `liq_dep` | parametric-insurance | `LiquidityDepositedEvent` |
+| `LIQUIDITY_WITHDRAWN` | `liq_wdraw` | parametric-insurance | `LiquidityWithdrawnEvent` |
+| `TRANSFER` | `transfer` | token | — |
+| `MINT` | `mint` | token | — |
+| `BURN` | `burn` | token | — |
+| `APPROVE` | `approve` | token | — |
+| `VESTING_GRANTED` | `v_grant` | academy (vesting) | `VestingGrantedEvent` |
+| `VESTING_CLAIMED` | `v_claim` | academy (vesting) | `VestingClaimedEvent` |
+| `VESTING_REVOKED` | `v_revoke` | academy (vesting) | `VestingRevokedEvent` |
+| `DID_CREATED` | `did_crt` | did-registry | `DidCreatedEvent` |
+| `DID_UPDATED` | `did_upd` | did-registry | `DidUpdatedEvent` |
+| `DID_DEACTIVATED` | `did_deact` | did-registry | `DidDeactivatedEvent` |
+| `VERIF_METHOD_ADDED` | `vm_added` | did-registry | `VerificationMethodAddedEvent` |
+| `SERVICE_ADDED` | `svc_added` | did-registry | `ServiceAddedEvent` |
+| `HUB_CREATED` | `hub_crt` | identity-hub | `HubCreatedEvent` |
+| `DATA_ENTRY_ADDED` | `data_add` | identity-hub | `DataEntryAddedEvent` |
+| `PERM_GRANTED` | `prm_grnt` | identity-hub | `PermissionGrantedEvent` |
+| `PERM_REVOKED` | `perm_rev` | identity-hub | `PermissionRevokedEvent` |
+| `DISCLOSURE_CREATED` | `disc_crt` | identity-hub | `SelectiveDisclosureCreatedEvent` |
+| `CREDENTIAL_ISSUED` | `cred_iss` | verifiable-credentials | `CredentialIssuedEvent` |
+| `CREDENTIAL_REVOKED` | `cred_rev` | verifiable-credentials | `CredentialRevokedEvent` |
+| `ASSET_REGISTERED` | `asset_reg` | synthetic-assets | `AssetRegisteredEvent` |
+| `CDP_OPENED` | `cdp_open` | synthetic-assets | `CdpOpenedEvent` |
+| `CDP_CLOSED` | `cdp_close` | synthetic-assets | `CdpClosedEvent` |
+| `COLLATERAL_ADDED` | `col_add` | synthetic-assets | `CollateralAddedEvent` |
+| `CDP_LIQUIDATED` | `cdp_liq` | synthetic-assets | `CdpLiquidatedEvent` |
+| `PRICE_UPDATED` | `price_upd` | synthetic-assets | `PriceUpdatedEvent` |
+| `TCR_APPLIED` | `tcr_apply` | tcr | `TcrApplicationEvent` |
+| `TCR_CHALLENGED` | `tcr_chall` | tcr | `TcrChallengedEvent` |
+| `TCR_VOTED` | `tcr_vote` | tcr | `TcrVotedEvent` |
+| `TCR_RESOLVED` | `tcr_resol` | tcr | `TcrResolvedEvent` |
+| `RESERVE_ASSET_ADDED` | `res_add` | stablecoin-reserve | `ReserveAssetAddedEvent` |
+| `RESERVE_ASSET_UPDATED` | `res_upd` | stablecoin-reserve | `ReserveAssetUpdatedEvent` |
+
+### Indexer Integration
+
+All event structs are defined in `shared/src/events.rs` and annotated with `#[contracttype]` so the Soroban XDR SDK can decode them directly. Subscribe to any topic via the Stellar Horizon `transactions` or `effects` streams, or use the `stellar-monitor` backend module which already polls for these events.
+
 ## Security Considerations
 
 - ✅ All contracts implement authentication via `require_auth()`

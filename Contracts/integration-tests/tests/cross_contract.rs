@@ -8,11 +8,15 @@ use shared::circuit_breaker::CircuitBreakerConfig;
 use shared::governance::ProposalStatus;
 use social_rewards::SocialRewardsContract;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short,
-    testutils::{Address as _, Ledger},
-    token, Address, Env, String, Vec,
+    contract, contractimpl, contracttype,
+    testutils::{Address as _, Events, Ledger},
+    token, Address, Env, String, Symbol, Vec,
 };
 use trading::UpgradeableTradingContract;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mock token
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[contract]
 pub struct MockTokenContract;
@@ -41,14 +45,11 @@ impl MockTokenContract {
 
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
-
         let from_balance = Self::balance(env.clone(), from.clone());
         if from_balance < amount {
             panic!("insufficient balance")
         }
-
         let to_balance = Self::balance(env.clone(), to.clone());
-
         env.storage()
             .persistent()
             .set(&TokenDataKey::Balance(from), &(from_balance - amount));
@@ -57,6 +58,41 @@ impl MockTokenContract {
             .set(&TokenDataKey::Balance(to), &(to_balance + amount));
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: assert at least one published event matches the given topic symbol.
+//
+// soroban_sdk::Env::events().all() returns:
+//   Vec<(Address, soroban_sdk::Vec<Val>, Val)>
+//             contract  topics           data
+//
+// Long symbols (>9 chars) are heap-allocated in the Soroban test VM — two
+// Symbol::new calls for the same string produce different object handles.
+// The only stable comparison is to convert both sides to their string
+// representation via soroban_sdk::Symbol::to_string.
+// ─────────────────────────────────────────────────────────────────────────────
+fn assert_event_emitted(env: &Env, expected_topic: Symbol) {
+    use soroban_sdk::TryFromVal;
+    let expected_str = expected_topic.to_string();
+
+    let found = env.events().all().iter().any(|(_, topics, _)| {
+        topics.iter().any(|raw_val| {
+            Symbol::try_from_val(env, &raw_val)
+                .map(|s| s.to_string() == expected_str)
+                .unwrap_or(false)
+        })
+    });
+
+    assert!(
+        found,
+        "Expected event with topic \"{}\" was not emitted",
+        expected_str
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn test_academy_rewards_trigger_social_rewards() {
@@ -95,9 +131,21 @@ fn test_academy_rewards_trigger_social_rewards() {
     assert_eq!(discount, 500);
 
     social.add_reward(&user, &(discount as i128));
+    social.record_engagement(
+        &user,
+        &Symbol::new(&env, "badge"),
+        &(discount as i128),
+    );
 
     let record = academy.get_redemption_history(&user, &0u32).unwrap();
     assert_eq!(record.discount_applied, 500);
+
+    // ── Event assertions ─────────────────────────────────────────────────────
+    // academy-rewards uses Symbol::new (not symbol_short!) for its topics
+    assert_event_emitted(&env, Symbol::new(&env, "badge_minted"));
+    assert_event_emitted(&env, Symbol::new(&env, "badge_redeemed"));
+    // social_rewards emits "eng_rec" on record_engagement; add_reward is silent
+    assert_event_emitted(&env, Symbol::new(&env, "eng_rec"));
 }
 
 #[test]
@@ -112,10 +160,10 @@ fn test_trading_interacts_with_fee_distribution() {
     let trading_id = env.register_contract(None, UpgradeableTradingContract);
     let trading = trading::UpgradeableTradingContractClient::new(&env, &trading_id);
 
-    let admin = Address::generate(&env);
-    let approver = Address::generate(&env);
-    let executor = Address::generate(&env);
-    let trader = Address::generate(&env);
+    let admin        = Address::generate(&env);
+    let approver     = Address::generate(&env);
+    let executor     = Address::generate(&env);
+    let trader       = Address::generate(&env);
     let fee_recipient = Address::generate(&env);
 
     let mut approvers = Vec::new(&env);
@@ -128,15 +176,14 @@ fn test_trading_interacts_with_fee_distribution() {
     };
 
     trading.init(&admin, &approvers, &executor, &cb_config);
-
     token_admin.mint(&trader, &1000i128);
 
-    let fee_before_trader = token::Client::new(&env, &token_id).balance(&trader);
+    let fee_before_trader    = token::Client::new(&env, &token_id).balance(&trader);
     let fee_before_recipient = token::Client::new(&env, &token_id).balance(&fee_recipient);
 
     let trade_id = trading.trade(
         &trader,
-        &symbol_short!("XLMUSD"),
+        &Symbol::new(&env, "XLMUSD"),
         &250i128,
         &100i128,
         &true,
@@ -147,7 +194,7 @@ fn test_trading_interacts_with_fee_distribution() {
 
     assert_eq!(trade_id, 1);
 
-    let fee_after_trader = token::Client::new(&env, &token_id).balance(&trader);
+    let fee_after_trader    = token::Client::new(&env, &token_id).balance(&trader);
     let fee_after_recipient = token::Client::new(&env, &token_id).balance(&fee_recipient);
 
     assert_eq!(fee_before_trader - fee_after_trader, 25);
@@ -156,6 +203,10 @@ fn test_trading_interacts_with_fee_distribution() {
     let stats = trading.get_stats();
     assert_eq!(stats.total_trades, 1);
     assert_eq!(stats.total_volume, 250);
+
+    // ── Event assertions ─────────────────────────────────────────────────────
+    assert_event_emitted(&env, Symbol::new(&env, "trade"));
+    assert_event_emitted(&env, Symbol::new(&env, "fee_col"));
 }
 
 #[test]
@@ -170,11 +221,11 @@ fn test_messaging_notifications_from_other_contract_flows() {
     let messaging_id = env.register_contract(None, UpgradeableMessagingContract);
     let messaging = messaging::UpgradeableMessagingContractClient::new(&env, &messaging_id);
 
-    let admin = Address::generate(&env);
+    let admin    = Address::generate(&env);
     let approver = Address::generate(&env);
     let executor = Address::generate(&env);
     let notifier = Address::generate(&env);
-    let user = Address::generate(&env);
+    let user     = Address::generate(&env);
 
     let mut approvers = Vec::new(&env);
     approvers.push_back(approver);
@@ -186,7 +237,6 @@ fn test_messaging_notifications_from_other_contract_flows() {
     };
 
     messaging.init(&admin, &approvers, &executor, &cb_config);
-
     academy.initialize(&admin, &cb_config);
     academy.create_badge_type(
         &admin,
@@ -199,7 +249,7 @@ fn test_messaging_notifications_from_other_contract_flows() {
     academy.mint_badge(&admin, &user, &2u32);
 
     let discount = academy.redeem_badge(&user, &String::from_str(&env, "tx-2"));
-    let payload = String::from_str(&env, "Your academy badge was redeemed successfully");
+    let payload  = String::from_str(&env, "Your academy badge was redeemed successfully");
 
     let message_id = messaging.send_message(&notifier, &user, &payload);
     assert_eq!(message_id, 1);
@@ -211,6 +261,10 @@ fn test_messaging_notifications_from_other_contract_flows() {
     let notifications = messaging.get_messages(&user, &false, &true, &true);
     assert_eq!(notifications.len(), 1);
     assert_eq!(notifications.get(0).unwrap().payload, payload);
+
+    // ── Event assertions ─────────────────────────────────────────────────────
+    assert_event_emitted(&env, Symbol::new(&env, "msg_sent"));
+    assert_event_emitted(&env, Symbol::new(&env, "badge_redeemed"));
 }
 
 #[test]
@@ -220,12 +274,12 @@ fn test_shared_governance_module_across_contracts() {
     env.mock_all_auths();
 
     let trading_id = env.register_contract(None, UpgradeableTradingContract);
-    let trading = trading::UpgradeableTradingContractClient::new(&env, &trading_id);
+    let trading    = trading::UpgradeableTradingContractClient::new(&env, &trading_id);
 
     let messaging_id = env.register_contract(None, UpgradeableMessagingContract);
-    let messaging = messaging::UpgradeableMessagingContractClient::new(&env, &messaging_id);
+    let messaging    = messaging::UpgradeableMessagingContractClient::new(&env, &messaging_id);
 
-    let admin = Address::generate(&env);
+    let admin    = Address::generate(&env);
     let approver = Address::generate(&env);
     let executor = Address::generate(&env);
 
@@ -243,8 +297,8 @@ fn test_shared_governance_module_across_contracts() {
 
     let trading_proposal = trading.propose_upgrade(
         &admin,
-        &symbol_short!("tv2hash"),
-        &symbol_short!("UpgrTrade"),
+        &Symbol::new(&env, "tv2hash"),
+        &Symbol::new(&env, "UpgrTrade"),
         &approvers,
         &1u32,
         &3600u64,
@@ -253,8 +307,8 @@ fn test_shared_governance_module_across_contracts() {
 
     let messaging_proposal = messaging.propose_upgrade(
         &admin,
-        &symbol_short!("mv2hash"),
-        &symbol_short!("UpgrMsg"),
+        &Symbol::new(&env, "mv2hash"),
+        &Symbol::new(&env, "UpgrMsg"),
         &approvers,
         &1u32,
         &3600u64,
@@ -262,7 +316,7 @@ fn test_shared_governance_module_across_contracts() {
     messaging.approve_upgrade(&messaging_proposal, &approver);
 
     let trade_status = trading.get_upgrade_proposal(&trading_proposal).status;
-    let msg_status = messaging.get_upgrade_proposal(&messaging_proposal).status;
+    let msg_status   = messaging.get_upgrade_proposal(&messaging_proposal).status;
 
     assert_eq!(trade_status, ProposalStatus::Approved);
     assert_eq!(msg_status, ProposalStatus::Approved);
@@ -338,3 +392,10 @@ fn test_shared_governance_module_across_contracts() {
 //     assert!(result.is_err(), "Reentrancy should be blocked");
 //     ReentrancyGuard::exit(&env);
 // }
+    assert_eq!(msg_status,   ProposalStatus::Approved);
+
+    // ── Governance has no on-chain events — validate via state ────────────────
+    // Both proposals reached Approved status, confirming the governance module
+    // correctly processes propose → approve flows across contracts.
+    // (Event emission for governance transitions is tracked in issue #774)
+}

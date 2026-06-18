@@ -1,0 +1,17 @@
+[package]
+name = "upgradeability"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable initializer protection and upgradeability patterns for Stellara contracts"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+testutils = ["soroban-sdk/testutils"]
+
+[dependencies]
+soroban-sdk = { version = "20.5.0", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+soroban-sdk = { version = "20.5.0", features = ["testutils"], default-features = false }

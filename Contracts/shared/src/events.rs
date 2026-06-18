@@ -32,11 +32,11 @@ pub mod topics {
     pub const REWARD_CLAIMED: Symbol = symbol_short!("claimed");
 
     // Parametric insurance events
-    pub const POLICY_CREATED: Symbol = symbol_short!("pol_create");
-    pub const POLICY_CANCELLED: Symbol = symbol_short!("pol_cancel");
-    pub const POLICY_EXPIRED: Symbol = symbol_short!("pol_expire");
+    pub const POLICY_CREATED: Symbol = symbol_short!("pol_crt");
+    pub const POLICY_CANCELLED: Symbol = symbol_short!("pol_cnl");
+    pub const POLICY_EXPIRED: Symbol = symbol_short!("pol_exp");
     pub const TRIGGER_ACTIVATED: Symbol = symbol_short!("trig_act");
-    pub const CLAIM_PAID: Symbol = symbol_short!("claim_paid");
+    pub const CLAIM_PAID: Symbol = symbol_short!("clm_paid");
     pub const LIQUIDITY_DEPOSITED: Symbol = symbol_short!("liq_dep");
     pub const LIQUIDITY_WITHDRAWN: Symbol = symbol_short!("liq_wdraw");
 
@@ -431,4 +431,346 @@ impl EventEmitter {
     pub fn liquidity_withdrawn(env: &Env, event: LiquidityWithdrawnEvent) {
         env.events().publish((topics::LIQUIDITY_WITHDRAWN,), event);
     }
+}
+
+// =============================================================================
+// DID Registry Events
+// =============================================================================
+
+/// Emitted when a new DID is created
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DidCreatedEvent {
+    pub did: Symbol,
+    pub controller: Address,
+    pub method: Symbol,
+    pub timestamp: u64,
+}
+
+/// Emitted when a DID document is updated
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DidUpdatedEvent {
+    pub did: Symbol,
+    pub controller: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a DID is permanently deactivated
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DidDeactivatedEvent {
+    pub did: Symbol,
+    pub deactivated_by: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a verification method is added to a DID
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VerificationMethodAddedEvent {
+    pub did: Symbol,
+    pub method_id: Symbol,
+    pub controller: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a service endpoint is added to a DID
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ServiceAddedEvent {
+    pub did: Symbol,
+    pub service_id: Symbol,
+    pub controller: Address,
+    pub timestamp: u64,
+}
+
+// =============================================================================
+// Identity Hub Events
+// =============================================================================
+
+/// Emitted when a new identity hub is created
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HubCreatedEvent {
+    pub hub_id: Symbol,
+    pub owner_did: Symbol,
+    pub timestamp: u64,
+}
+
+/// Emitted when a data entry is added to a hub
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DataEntryAddedEvent {
+    pub hub_id: Symbol,
+    pub entry_id: Symbol,
+    pub added_by: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a permission is granted on a hub
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PermissionGrantedEvent {
+    pub hub_id: Symbol,
+    pub permission_id: Symbol,
+    pub grantee: Address,
+    pub grantor: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a permission is revoked from a hub
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PermissionRevokedEvent {
+    pub hub_id: Symbol,
+    pub permission_id: Symbol,
+    pub revoked_by: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a selective disclosure proof is created
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SelectiveDisclosureCreatedEvent {
+    pub disclosure_id: Symbol,
+    pub hub_id: Symbol,
+    pub requester: Address,
+    pub timestamp: u64,
+}
+
+// =============================================================================
+// Verifiable Credentials Events
+// =============================================================================
+
+/// Emitted when a credential is issued
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CredentialIssuedEvent {
+    pub credential_id: Symbol,
+    pub issuer_did: Symbol,
+    pub subject_did: Symbol,
+    pub credential_type: Symbol,
+    pub timestamp: u64,
+}
+
+/// Emitted when a credential is revoked
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CredentialRevokedEvent {
+    pub credential_id: Symbol,
+    pub revoked_by: Address,
+    pub reason: Symbol,
+    pub timestamp: u64,
+}
+
+// =============================================================================
+// Synthetic Assets Events
+// =============================================================================
+
+/// Emitted when a synthetic asset is registered
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AssetRegisteredEvent {
+    pub asset_symbol: Symbol,
+    pub registered_by: Address,
+    pub collateral_ratio: u32,
+    pub timestamp: u64,
+}
+
+/// Emitted when a CDP is opened
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CdpOpenedEvent {
+    pub owner: Address,
+    pub asset_symbol: Symbol,
+    pub collateral_amount: i128,
+    pub timestamp: u64,
+}
+
+/// Emitted when a CDP is closed
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CdpClosedEvent {
+    pub owner: Address,
+    pub asset_symbol: Symbol,
+    pub collateral_returned: i128,
+    pub timestamp: u64,
+}
+
+/// Emitted when collateral is added to a CDP
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollateralAddedEvent {
+    pub owner: Address,
+    pub asset_symbol: Symbol,
+    pub amount: i128,
+    pub new_ratio: u32,
+    pub timestamp: u64,
+}
+
+/// Emitted when a CDP is liquidated
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CdpLiquidatedEvent {
+    pub owner: Address,
+    pub liquidator: Address,
+    pub asset_symbol: Symbol,
+    pub collateral_seized: i128,
+    pub debt_repaid: i128,
+    pub timestamp: u64,
+}
+
+/// Emitted when the oracle price for a synthetic asset is updated
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PriceUpdatedEvent {
+    pub asset_symbol: Symbol,
+    pub old_price: i128,
+    pub new_price: i128,
+    pub updated_by: Address,
+    pub timestamp: u64,
+}
+
+// =============================================================================
+// TCR (Token-Curated Registry) Events
+// =============================================================================
+
+/// Emitted when an application is submitted to the registry
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TcrApplicationEvent {
+    pub listing_id: u32,
+    pub applicant: Address,
+    pub deposit: i128,
+    pub metadata: Symbol,
+    pub timestamp: u64,
+}
+
+/// Emitted when a listing is challenged
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TcrChallengedEvent {
+    pub challenge_id: u32,
+    pub listing_id: u32,
+    pub challenger: Address,
+    pub deposit: i128,
+    pub timestamp: u64,
+}
+
+/// Emitted when a vote is cast in a challenge
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TcrVotedEvent {
+    pub challenge_id: u32,
+    pub voter: Address,
+    pub side: bool,
+    pub weight: i128,
+    pub timestamp: u64,
+}
+
+/// Emitted when a challenge is resolved
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TcrResolvedEvent {
+    pub listing_id: u32,
+    pub challenge_id: u32,
+    pub accepted: bool,
+    pub timestamp: u64,
+}
+
+// =============================================================================
+// Stablecoin Reserve Events
+// =============================================================================
+
+/// Emitted when a reserve asset is added
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ReserveAssetAddedEvent {
+    pub asset: Address,
+    pub target_allocation: u32,
+    pub added_by: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a reserve asset config is updated
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ReserveAssetUpdatedEvent {
+    pub asset: Address,
+    pub new_allocation: u32,
+    pub updated_by: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a redemption request is submitted
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RedemptionRequestedEvent {
+    pub request_id: u64,
+    pub requester: Address,
+    pub amount: u128,
+    pub timestamp: u64,
+}
+
+/// Emitted when a redemption is processed / fulfilled
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RedemptionProcessedEvent {
+    pub request_id: u64,
+    pub requester: Address,
+    pub amount: u128,
+    pub timestamp: u64,
+}
+
+// =============================================================================
+// Extended topics
+// =============================================================================
+
+pub mod extended_topics {
+    use soroban_sdk::{symbol_short, Symbol};
+
+    // DID registry
+    pub const DID_CREATED: Symbol             = symbol_short!("did_crt");
+    pub const DID_UPDATED: Symbol             = symbol_short!("did_upd");
+    pub const DID_DEACTIVATED: Symbol         = symbol_short!("did_deact");
+    pub const VERIF_METHOD_ADDED: Symbol      = symbol_short!("vm_added");
+    pub const SERVICE_ADDED: Symbol           = symbol_short!("svc_added");
+
+    // Identity hub
+    pub const HUB_CREATED: Symbol             = symbol_short!("hub_crt");
+    pub const DATA_ENTRY_ADDED: Symbol        = symbol_short!("data_add");
+    pub const PERM_GRANTED: Symbol            = symbol_short!("prm_grnt");
+    pub const PERM_REVOKED: Symbol            = symbol_short!("perm_rev");
+    pub const DISCLOSURE_CREATED: Symbol      = symbol_short!("disc_crt");
+
+    // Verifiable credentials
+    pub const CREDENTIAL_ISSUED: Symbol       = symbol_short!("cred_iss");
+    pub const CREDENTIAL_REVOKED: Symbol      = symbol_short!("cred_rev");
+
+    // Synthetic assets
+    pub const ASSET_REGISTERED: Symbol        = symbol_short!("asset_reg");
+    pub const CDP_OPENED: Symbol              = symbol_short!("cdp_open");
+    pub const CDP_CLOSED: Symbol              = symbol_short!("cdp_close");
+    pub const COLLATERAL_ADDED: Symbol        = symbol_short!("col_add");
+    pub const CDP_LIQUIDATED: Symbol          = symbol_short!("cdp_liq");
+    pub const PRICE_UPDATED: Symbol           = symbol_short!("price_upd");
+
+    // TCR
+    pub const TCR_APPLIED: Symbol             = symbol_short!("tcr_apply");
+    pub const TCR_CHALLENGED: Symbol          = symbol_short!("tcr_chall");
+    pub const TCR_VOTED: Symbol               = symbol_short!("tcr_vote");
+    pub const TCR_RESOLVED: Symbol            = symbol_short!("tcr_resol");
+
+    // Stablecoin reserve
+    pub const RESERVE_ASSET_ADDED: Symbol     = symbol_short!("res_add");
+    pub const RESERVE_ASSET_UPDATED: Symbol   = symbol_short!("res_upd");
+    pub const REDEMPTION_REQUESTED: Symbol    = symbol_short!("redm_req");
+    pub const REDEMPTION_PROCESSED: Symbol    = symbol_short!("redm_proc");
+
+    // Token (from #771 — kept here for discoverability)
+    pub const APPROVE: Symbol                 = symbol_short!("approve");
+    pub const VESTING_GRANTED: Symbol         = symbol_short!("v_grant");
+    pub const VESTING_CLAIMED: Symbol         = symbol_short!("v_claim");
+    pub const VESTING_REVOKED: Symbol         = symbol_short!("v_revoke");
 }

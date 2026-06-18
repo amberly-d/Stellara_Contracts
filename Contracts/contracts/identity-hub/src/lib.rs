@@ -3,6 +3,7 @@ use soroban_sdk::{
     contracterror, require_auth
 };
 use shared::governance::{GovernanceManager, GovernanceRole};
+use shared::events::{extended_topics, HubCreatedEvent, DataEntryAddedEvent, PermissionGrantedEvent, PermissionRevokedEvent, SelectiveDisclosureCreatedEvent};
 
 // Identity Hub data structure
 #[contracttype]
@@ -114,7 +115,7 @@ impl IdentityHubContract {
         env.storage().persistent().set(&roles_key, &role_map);
         
         // Initialize hub counter
-        let counter_key = symbol_short!("hub_counter");
+        let counter_key = symbol_short!("hub_cnt");
         env.storage().persistent().set(&counter_key, &0u64);
     }
 
@@ -125,7 +126,7 @@ impl IdentityHubContract {
         require_auth!(&caller);
 
         // Generate hub ID
-        let counter_key = symbol_short!("hub_counter");
+        let counter_key = symbol_short!("hub_cnt");
         let count: u64 = env.storage().persistent().get(&counter_key).unwrap_or(0);
         let hub_id = symbol_short!(&format!("hub-{}", count + 1));
 
@@ -154,7 +155,7 @@ impl IdentityHubContract {
         hubs.set(hub_id.clone(), hub);
         
         // Store owner to hub mapping
-        let owner_map_key = symbol_short!("owner_to_hub");
+        let owner_map_key = symbol_short!("own_hub");
         let mut owner_map: Map<Symbol, Symbol> = env
             .storage()
             .persistent()
@@ -167,6 +168,15 @@ impl IdentityHubContract {
         env.storage().persistent().set(&hubs_key, &hubs);
         env.storage().persistent().set(&owner_map_key, &owner_map);
         env.storage().persistent().set(&counter_key, &(count + 1));
+
+        env.events().publish(
+            (extended_topics::HUB_CREATED,),
+            HubCreatedEvent {
+                hub_id: hub_id.clone(),
+                owner_did,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         hub_id
     }
@@ -212,8 +222,18 @@ impl IdentityHubContract {
             .get(&hubs_key)
             .unwrap_or_else(|| Map::new(&env));
 
-        hubs.set(hub_id, hub);
+        hubs.set(hub_id.clone(), hub);
         env.storage().persistent().set(&hubs_key, &hubs);
+
+        env.events().publish(
+            (extended_topics::DATA_ENTRY_ADDED,),
+            DataEntryAddedEvent {
+                hub_id,
+                entry_id: entry_id.clone(),
+                added_by: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         entry_id
     }
@@ -266,8 +286,19 @@ impl IdentityHubContract {
             .get(&hubs_key)
             .unwrap_or_else(|| Map::new(&env));
 
-        hubs.set(hub_id, hub);
+        hubs.set(hub_id.clone(), hub);
         env.storage().persistent().set(&hubs_key, &hubs);
+
+        env.events().publish(
+            (extended_topics::PERM_GRANTED,),
+            PermissionGrantedEvent {
+                hub_id,
+                permission_id: permission_id.clone(),
+                grantee: env.current_contract_address(),
+                grantor: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         permission_id
     }
@@ -299,11 +330,19 @@ impl IdentityHubContract {
             .get(&hubs_key)
             .unwrap_or_else(|| Map::new(&env));
 
-        hubs.set(hub_id, hub);
+        hubs.set(hub_id.clone(), hub);
         env.storage().persistent().set(&hubs_key, &hubs);
-    }
 
-    // Create selective disclosure
+        env.events().publish(
+            (extended_topics::PERM_REVOKED,),
+            PermissionRevokedEvent {
+                hub_id,
+                permission_id,
+                revoked_by: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+    }    // Create selective disclosure
     pub fn create_selective_disclosure(
         env: Env,
         presenter_did: Symbol,
@@ -327,7 +366,7 @@ impl IdentityHubContract {
         }
 
         // Generate disclosure ID
-        let counter_key = symbol_short!("disclosure_counter");
+        let counter_key = symbol_short!("disc_cnt");
         let count: u64 = env.storage().persistent().get(&counter_key).unwrap_or(0);
         let disclosure_id = symbol_short!(&format!("disclosure-{}", count + 1));
 
@@ -344,7 +383,7 @@ impl IdentityHubContract {
         };
 
         // Store disclosure
-        let disclosures_key = symbol_short!("disclosures");
+        let disclosures_key = symbol_short!("disclosrs");
         let mut disclosures: Map<Symbol, SelectiveDisclosure> = env
             .storage()
             .persistent()
@@ -354,6 +393,16 @@ impl IdentityHubContract {
         disclosures.set(disclosure_id.clone(), disclosure);
         env.storage().persistent().set(&disclosures_key, &disclosures);
         env.storage().persistent().set(&counter_key, &(count + 1));
+
+        env.events().publish(
+            (extended_topics::DISCLOSURE_CREATED,),
+            SelectiveDisclosureCreatedEvent {
+                disclosure_id: disclosure_id.clone(),
+                hub_id: hub.id,
+                requester: env.current_contract_address(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         disclosure_id
     }
@@ -431,7 +480,7 @@ impl IdentityHubContract {
 
     // Get hub by owner DID
     pub fn get_hub_by_owner(env: Env, owner_did: Symbol) -> Symbol {
-        let owner_map_key = symbol_short!("owner_to_hub");
+        let owner_map_key = symbol_short!("own_hub");
         let owner_map: Map<Symbol, Symbol> = env
             .storage()
             .persistent()
@@ -443,7 +492,7 @@ impl IdentityHubContract {
 
     // Get hub count
     pub fn get_hub_count(env: Env) -> u64 {
-        let counter_key = symbol_short!("hub_counter");
+        let counter_key = symbol_short!("hub_cnt");
         env.storage().persistent().get(&counter_key).unwrap_or(0)
     }
 
@@ -460,7 +509,7 @@ impl IdentityHubContract {
     }
 
     fn get_disclosure(env: Env, disclosure_id: Symbol) -> Result<SelectiveDisclosure, IdentityHubError> {
-        let disclosures_key = symbol_short!("disclosures");
+        let disclosures_key = symbol_short!("disclosrs");
         let disclosures: Map<Symbol, SelectiveDisclosure> = env
             .storage()
             .persistent()
@@ -474,7 +523,7 @@ impl IdentityHubContract {
         for condition in conditions.iter() {
             // Simplified condition checking
             // In production, implement proper condition evaluation
-            if condition.type_ == symbol_short!("time_limit") {
+            if condition.type_ == symbol_short!("time_lmt") {
                 let current_time = env.ledger().timestamp();
                 let limit = condition.value.to_u64().unwrap();
                 if current_time > limit {

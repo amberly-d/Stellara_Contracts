@@ -12,5 +12,6 @@ members = [
     "contracts/amm",
     "integration-tests",
     "shared",
+    "contracts/upgradeability",
 ]
 resolver = "2"
