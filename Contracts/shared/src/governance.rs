@@ -1,4 +1,5 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
+use crate::acl::{ROLE_ADMIN, ROLE_APPROVER, ROLE_EXECUTOR, PERMISSION_PROPOSE, PERMISSION_APPROVE, PERMISSION_EXECUTE, PERMISSION_PAUSE, PERMISSION_UNPAUSE, PERMISSION_MGR_ACL, ACL};
 
 /// Upgrade proposal that must be approved via governance
 #[contracttype]
@@ -30,7 +31,8 @@ pub enum ProposalStatus {
     Cancelled = 4,
 }
 
-/// Governance role
+// Keep GovernanceRole for backwards compatibility, but recommend using ACL roles
+/// Governance role (deprecated - use shared ACL roles instead)
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -69,22 +71,49 @@ impl From<soroban_sdk::Error> for GovernanceError {
 pub struct GovernanceManager;
 
 impl GovernanceManager {
-    /// Validate that an address has a specific role
-    pub fn require_role(env: &Env, address: &Address, required_role: GovernanceRole) {
-        let roles_key = symbol_short!("roles");
-        let role_map: soroban_sdk::Map<Address, GovernanceRole> = env
-            .storage()
-            .persistent()
-            .get(&roles_key)
-            .unwrap_or_else(|| soroban_sdk::Map::new(env));
+    /// Initialize standard governance roles and permissions
+    pub fn init_governance_roles(env: &Env, admin: Address, approvers: Vec<Address>, executor: Address) {
+        // Create standard roles
+        ACL::create_role(env, &ROLE_ADMIN);
+        ACL::create_role(env, &ROLE_APPROVER);
+        ACL::create_role(env, &ROLE_EXECUTOR);
 
-        let user_role = role_map
-            .get(address.clone())
-            .unwrap_or(GovernanceRole::Executor);
+        // Assign admin role
+        ACL::assign_role(env, &admin, &ROLE_ADMIN);
 
-        if user_role > required_role {
-            panic!("UNAUTH");
+        // Assign approver roles
+        for approver in approvers.iter() {
+            ACL::assign_role(env, &approver, &ROLE_APPROVER);
         }
+
+        // Assign executor role
+        ACL::assign_role(env, &executor, &ROLE_EXECUTOR);
+
+        // Assign permissions
+        ACL::assign_permission(env, &ROLE_ADMIN, &PERMISSION_PROPOSE);
+        ACL::assign_permission(env, &ROLE_ADMIN, &PERMISSION_MGR_ACL);
+        ACL::assign_permission(env, &ROLE_ADMIN, &PERMISSION_PAUSE);
+        ACL::assign_permission(env, &ROLE_ADMIN, &PERMISSION_UNPAUSE);
+        
+        ACL::assign_permission(env, &ROLE_APPROVER, &PERMISSION_APPROVE);
+        
+        ACL::assign_permission(env, &ROLE_EXECUTOR, &PERMISSION_EXECUTE);
+    }
+
+    /// Validate that an address has a specific role (backward compatibility)
+    pub fn require_role(env: &Env, address: &Address, required_role: GovernanceRole) {
+        // For backward compatibility, map to ACL permissions based on role
+        let permission = match required_role {
+            GovernanceRole::Admin => PERMISSION_PROPOSE,
+            GovernanceRole::Approver => PERMISSION_APPROVE,
+            GovernanceRole::Executor => PERMISSION_EXECUTE,
+        };
+        ACL::require_permission(env, address, &permission);
+    }
+
+    /// Validate that an address has a specific permission using ACL
+    pub fn require_permission(env: &Env, address: &Address, permission: Symbol) {
+        ACL::require_permission(env, address, &permission);
     }
 
     /// Create a new upgrade proposal
@@ -98,8 +127,8 @@ impl GovernanceManager {
         approvers: Vec<Address>,
         timelock_delay: u64,
     ) -> Result<u64, GovernanceError> {
-        // Validate proposer is admin
-        Self::require_role(env, &proposer, GovernanceRole::Admin);
+        // Validate proposer has permission
+        Self::require_permission(env, &proposer, PERMISSION_PROPOSE);
 
         // Validate threshold
         if approval_threshold == 0 || approval_threshold > approvers.len() as u32 {
@@ -137,7 +166,7 @@ impl GovernanceManager {
             .storage()
             .persistent()
             .get(&proposals_key)
-            .unwrap_or_else(|| soroban_sdk::Map::new(env));
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
 
         proposals.set(next_id, proposal);
         env.storage().persistent().set(&proposals_key, &proposals);
@@ -157,7 +186,7 @@ impl GovernanceManager {
         approver: Address,
     ) -> Result<(), GovernanceError> {
         // Validate approver has permission
-        Self::require_role(env, &approver, GovernanceRole::Approver);
+        Self::require_permission(env, &approver, PERMISSION_APPROVE);
 
         let proposals_key = symbol_short!("props");
         let mut proposals: soroban_sdk::Map<u64, UpgradeProposal> = env
@@ -186,7 +215,7 @@ impl GovernanceManager {
             .storage()
             .persistent()
             .get(&approvals_key)
-            .unwrap_or_else(|| soroban_sdk::Map::new(env));
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
 
         if approvals.get((proposal_id, approver.clone())).is_some() {
             return Err(GovernanceError::DuplicateApproval);
@@ -216,8 +245,9 @@ impl GovernanceManager {
         proposal_id: u64,
         executor: Address,
     ) -> Result<(), GovernanceError> {
-        // Validate executor has permission
-        Self::require_role(env, &executor, GovernanceRole::Executor);
+        // Validate executor has permission OR allow any (for backward compatibility)
+        // Keep old behavior where any address can execute approved proposals
+        // Self::require_permission(env, &executor, PERMISSION_EXECUTE);
 
         let proposals_key = symbol_short!("props");
         let mut proposals: soroban_sdk::Map<u64, UpgradeProposal> = env
@@ -256,7 +286,7 @@ impl GovernanceManager {
         proposal_id: u64,
         rejector: Address,
     ) -> Result<(), GovernanceError> {
-        Self::require_role(env, &rejector, GovernanceRole::Approver);
+        Self::require_permission(env, &rejector, PERMISSION_APPROVE);
 
         let proposals_key = symbol_short!("props");
         let mut proposals: soroban_sdk::Map<u64, UpgradeProposal> = env
@@ -286,7 +316,7 @@ impl GovernanceManager {
         proposal_id: u64,
         admin: Address,
     ) -> Result<(), GovernanceError> {
-        Self::require_role(env, &admin, GovernanceRole::Admin);
+        Self::require_permission(env, &admin, PERMISSION_PROPOSE);
 
         let proposals_key = symbol_short!("props");
         let mut proposals: soroban_sdk::Map<u64, UpgradeProposal> = env

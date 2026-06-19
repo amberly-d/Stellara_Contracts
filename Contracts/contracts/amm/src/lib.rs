@@ -16,9 +16,9 @@ use position::{
     mint_position, read_position, require_position, write_position,
 };
 
-use shared::acl::ACL;
+use shared::acl::{ACL, ROLE_ADMIN, ROLE_APPROVER, ROLE_EXECUTOR, PERMISSION_PAUSE, PERMISSION_UNPAUSE, PERMISSION_NEW_POOL, PERMISSION_MGR_ACL};
 use shared::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerState, PauseLevel};
-use shared::governance::{GovernanceManager, GovernanceRole, UpgradeProposal};
+use shared::governance::{GovernanceManager, UpgradeProposal};
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol, Vec,
 };
@@ -177,23 +177,15 @@ impl AmmContract {
             return Err(AmmError::Unauthorized);
         }
 
-        let mut roles = soroban_sdk::Map::new(&env);
-        roles.set(admin.clone(), GovernanceRole::Admin);
-        for a in approvers.iter() {
-            roles.set(a, GovernanceRole::Approver);
-        }
-        roles.set(executor, GovernanceRole::Executor);
+        GovernanceManager::init_governance_roles(&env, admin.clone(), approvers.clone(), executor.clone());
 
-        let admin_role = Symbol::new(&env, "admin");
-        ACL::create_role(&env, &admin_role);
-        ACL::assign_role(&env, &admin, &admin_role);
-        ACL::assign_permission(&env, &admin_role, &Symbol::new(&env, "pause"));
-        ACL::assign_permission(&env, &admin_role, &Symbol::new(&env, "unpause"));
-        ACL::assign_permission(&env, &admin_role, &Symbol::new(&env, "create_pool"));
-        ACL::assign_permission(&env, &admin_role, &Symbol::new(&env, "manage_acl"));
+        // Assign additional permissions to admin role
+        ACL::assign_permission(&env, &ROLE_ADMIN, &PERMISSION_PAUSE);
+        ACL::assign_permission(&env, &ROLE_ADMIN, &PERMISSION_UNPAUSE);
+        ACL::assign_permission(&env, &ROLE_ADMIN, &PERMISSION_NEW_POOL);
+        ACL::assign_permission(&env, &ROLE_ADMIN, &PERMISSION_MGR_ACL);
 
         env.storage().persistent().set(&keys::INIT, &true);
-        env.storage().persistent().set(&keys::ROLES, &roles);
         env.storage().persistent().set(&keys::POOL_CNT, &0u64);
 
         CircuitBreaker::init(&env, cb_config);
@@ -212,7 +204,7 @@ impl AmmContract {
     ) -> Result<(), AmmError> {
         caller.require_auth();
         require_init(&env)?;
-        ACL::require_permission(&env, &caller, &Symbol::new(&env, "create_pool"));
+        ACL::require_permission(&env, &caller, &PERMISSION_NEW_POOL);
 
         if !is_valid_fee_tier(fee_tier) {
             return Err(AmmError::InvalidFeeTier);
@@ -637,7 +629,7 @@ impl AmmContract {
     pub fn pause(env: Env, admin: Address) -> Result<(), AmmError> {
         admin.require_auth();
         require_init(&env)?;
-        ACL::require_permission(&env, &admin, &Symbol::new(&env, "pause"));
+        ACL::require_permission(&env, &admin, &PERMISSION_PAUSE);
         let mut state = CircuitBreaker::get_state(&env);
         state.pause_level = PauseLevel::Full;
         env.storage().persistent().set(&symbol_short!("cb_state"), &state);
@@ -648,7 +640,7 @@ impl AmmContract {
     pub fn unpause(env: Env, admin: Address) -> Result<(), AmmError> {
         admin.require_auth();
         require_init(&env)?;
-        ACL::require_permission(&env, &admin, &Symbol::new(&env, "unpause"));
+        ACL::require_permission(&env, &admin, &PERMISSION_UNPAUSE);
         let mut state = CircuitBreaker::get_state(&env);
         state.pause_level = PauseLevel::None;
         env.storage().persistent().set(&symbol_short!("cb_state"), &state);

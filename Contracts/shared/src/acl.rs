@@ -1,4 +1,21 @@
-use soroban_sdk::{Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{Address, Env, Map, Symbol, Vec, symbol_short};
+
+// Standard Roles
+pub const ROLE_ADMIN: Symbol = symbol_short!("admin");
+pub const ROLE_APPROVER: Symbol = symbol_short!("approver");
+pub const ROLE_EXECUTOR: Symbol = symbol_short!("executor");
+pub const ROLE_USER: Symbol = symbol_short!("user");
+
+// Standard Permissions
+pub const PERMISSION_SET_RATE: Symbol = symbol_short!("set_rate");
+pub const PERMISSION_PREMIUM: Symbol = symbol_short!("premium");
+pub const PERMISSION_PAUSE: Symbol = symbol_short!("pause");
+pub const PERMISSION_UNPAUSE: Symbol = symbol_short!("unpause");
+pub const PERMISSION_MGR_ACL: Symbol = symbol_short!("mgr_acl");
+pub const PERMISSION_NEW_POOL: Symbol = symbol_short!("new_pool");
+pub const PERMISSION_PROPOSE: Symbol = symbol_short!("propose");
+pub const PERMISSION_APPROVE: Symbol = symbol_short!("approve");
+pub const PERMISSION_EXECUTE: Symbol = symbol_short!("execute");
 
 pub struct ACL;
 
