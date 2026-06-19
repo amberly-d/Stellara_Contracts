@@ -5,8 +5,7 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 
-@Entity('audit_logs')
-export class AuditLog {
+export abstract class AuditLogEntry {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -24,4 +23,22 @@ export class AuditLog {
 
   @CreateDateColumn()
   timestamp: Date;
+
+  @Column({ default: '' })
+  previousHash: string;
+
+  @Column({ default: '' })
+  hash: string;
+
+  @Column({ default: '' })
+  signature: string;
+}
+
+@Entity('audit_logs')
+export class AuditLog extends AuditLogEntry {}
+
+@Entity('audit_log_archives')
+export class AuditLogArchive extends AuditLogEntry {
+  @CreateDateColumn()
+  archivedAt: Date;
 }

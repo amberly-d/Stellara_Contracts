@@ -2,7 +2,6 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../guards/roles.guard';
-import { ROLES_KEY } from '../decorators/roles.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { Role } from '../auth/roles.enum';
 
@@ -29,5 +28,23 @@ export class AuditController {
       from,
       to,
     });
+  }
+
+  @Get('verify')
+  @Roles(Role.ADMIN)
+  async verify() {
+    return this.auditService.verifyAuditChain();
+  }
+}
+
+@Controller('audit')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class AuditVerificationController {
+  constructor(private readonly auditService: AuditService) {}
+
+  @Get('verify')
+  @Roles(Role.ADMIN)
+  async verify() {
+    return this.auditService.verifyAuditChain();
   }
 }

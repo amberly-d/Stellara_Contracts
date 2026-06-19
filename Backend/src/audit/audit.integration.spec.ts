@@ -7,7 +7,7 @@ import supertest from 'supertest';
 
 import { AuditModule } from './audit.module';
 import { AuditService } from './audit.service';
-import { AuditLog } from './audit.entity';
+import { AuditLog, AuditLogArchive } from './audit.entity';
 
 describe('Audit Integration', () => {
   let app: INestApplication;
@@ -29,13 +29,13 @@ describe('Audit Integration', () => {
             username: config.get('DB_USERNAME'),
             password: config.get('DB_PASSWORD'),
             database: config.get('DB_DATABASE'),
-            entities: [AuditLog],
+            entities: [AuditLog, AuditLogArchive],
             synchronize: true, // Auto-create schema for tests
             logging: false,
           }),
         }),
 
-        TypeOrmModule.forFeature([AuditLog]),
+        TypeOrmModule.forFeature([AuditLog, AuditLogArchive]),
         AuditModule,
       ],
       providers: [
@@ -60,7 +60,7 @@ describe('Audit Integration', () => {
 
   it('should log an action and retrieve it via admin endpoint', async () => {
     // Ensure test starts with an empty audit table
-    await auditService['auditRepository'].clear();
+    await auditService.clearAllLogs();
 
     // Create a test audit log entry
     await auditService.logAction('USER_CREATED', 'admin-id', 'user-123', {
