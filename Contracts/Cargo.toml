@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "contracts/trading",
+    "contracts/staking-rewards",
     "contracts/social_rewards",
     "contracts/messaging",
     "contracts/academy",
