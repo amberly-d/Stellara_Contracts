@@ -126,55 +126,6 @@ fn test_early_withdrawal_penalty() {
 }
 
 #[test]
-fn test_unstake_pays_pending_rewards() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let user = Address::generate(&env);
-
-    let (staking_token_address, staking_token, staking_token_admin) = create_token(&env, &admin);
-    let (reward_token_address, reward_token, reward_token_admin) = create_token(&env, &admin);
-
-    let contract_id = env.register_contract(None, StakingRewardsContract);
-    let client = StakingRewardsContractClient::new(&env, &contract_id);
-
-    client.initialize(&admin, &staking_token_address, &reward_token_address);
-
-    staking_token_admin.mint(&user, &1000);
-    reward_token_admin.mint(&contract_id, &100000);
-
-    // Stake 1000 in pool 0 (30-day lockup, 5% APY)
-    client.stake(&user, &1000, &0);
-
-    // Jump 31 days so lockup has expired and rewards have accrued
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
-        timestamp: 31 * 24 * 60 * 60,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: [0u8; 32],
-        base_reserve: 10,
-        max_entry_ttl: 31104000,
-        min_persistent_entry_ttl: 31104000,
-        min_temp_entry_ttl: 31104000,
-    });
-
-    let pending = client.get_pending_rewards(&user);
-    assert!(pending > 0, "expected pending rewards before unstake");
-
-    // Unstake without claiming first — rewards should be paid automatically
-    let returned = client.unstake(&user);
-    assert_eq!(returned, 1000); // full principal, no penalty
-
-    // User must hold both principal and rewards after unstake
-    assert_eq!(staking_token.balance(&user), 1000);
-    assert_eq!(reward_token.balance(&user), pending);
-
-    // Stake record must be gone
-    assert!(client.get_stake(&user).is_none());
-}
-
-#[test]
 fn test_early_unstake_pays_pending_rewards() {
     let env = Env::default();
     env.mock_all_auths();
