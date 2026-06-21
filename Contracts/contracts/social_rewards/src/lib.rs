@@ -84,13 +84,19 @@ impl SocialRewardsContract {
         Ok(())
     }
 
-    /// Record an engagement activity
+    /// Record an engagement activity.
+    ///
+    /// Requires the `user` address to authorise this call so that no third party
+    /// can fabricate engagement history for another account.
     pub fn record_engagement(
         env: Env,
         user: Address,
         engagement_type: Symbol,
         metadata: i128,
     ) -> Result<u64, RewardError> {
+        // SECURITY: only the user themselves may record their own engagement.
+        user.require_auth();
+
         let init_key = symbol_short!("init");
         if !env.storage().persistent().has(&init_key) {
             return Err(RewardError::NotInitialized);
@@ -205,9 +211,81 @@ impl SocialRewardsContract {
         // Create reward symbol before moving env
         let reward_type = Symbol::new(&env, "reward");
 
-        // Record engagement as generic reward activity
+        // Record engagement as generic reward activity; caller must have authorised user.
         let _engagement_id = Self::record_engagement(env, user, reward_type, amount)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    fn init_contract(env: &Env) -> (SocialRewardsContractClient, Address) {
+        let id = env.register_contract(None, SocialRewardsContract);
+        let client = SocialRewardsContractClient::new(env, &id);
+        let admin = Address::generate(env);
+        env.mock_all_auths();
+        client.init(&admin);
+        (client, admin)
+    }
+
+    #[test]
+    fn authorized_user_records_own_engagement() {
+        let env = Env::default();
+        let (client, _) = init_contract(&env);
+        let user = Address::generate(&env);
+        let etype = Symbol::new(&env, "like");
+
+        env.mock_all_auths();
+        let id = client.record_engagement(&user, &etype, &50);
+        assert_eq!(id, 1u64);
+    }
+
+    #[test]
+    fn sequential_engagements_get_incrementing_ids() {
+        let env = Env::default();
+        let (client, _) = init_contract(&env);
+        let user = Address::generate(&env);
+        let etype = Symbol::new(&env, "share");
+
+        env.mock_all_auths();
+        assert_eq!(client.record_engagement(&user, &etype, &10), 1u64);
+        assert_eq!(client.record_engagement(&user, &etype, &20), 2u64);
+    }
+
+    #[test]
+    fn negative_metadata_is_rejected() {
+        let env = Env::default();
+        let (client, _) = init_contract(&env);
+        let user = Address::generate(&env);
+        let etype = Symbol::new(&env, "vote");
+
+        env.mock_all_auths();
+        let result = client.try_record_engagement(&user, &etype, &-1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[should_panic]
+    fn unauthorized_caller_cannot_record_engagement_for_another_user() {
+        let env = Env::default();
+        // Register and init without enabling auth mocking for this env instance.
+        let id = env.register_contract(None, SocialRewardsContract);
+        let client = SocialRewardsContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        // init() has no require_auth, so it succeeds without mocking.
+        env.mock_all_auths();
+        client.init(&admin);
+
+        // Create a fresh env without mock_all_auths so require_auth panics.
+        let env2 = Env::default();
+        let client2 = SocialRewardsContractClient::new(&env2, &id);
+        let victim = Address::generate(&env2);
+        let etype = Symbol::new(&env2, "like");
+        // No env2.mock_all_auths() — must panic at user.require_auth().
+        client2.record_engagement(&victim, &etype, &10);
     }
 }
