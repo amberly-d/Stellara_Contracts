@@ -211,3 +211,70 @@ fn test_compounding() {
     assert_eq!(stake_info.amount, 1073);
     assert_eq!(token.balance(&user), 0);
 }
+
+#[test]
+#[should_panic]
+fn test_overflow_protection_in_reward_calculation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let (staking_token_address, _staking_token, staking_token_admin) = create_token(&env, &admin);
+    let (reward_token_address, _reward_token, _reward_token_admin) = create_token(&env, &admin);
+
+    let contract_id = env.register_contract(None, StakingRewardsContract);
+    let client = StakingRewardsContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &staking_token_address, &reward_token_address);
+
+    // Stake an amount large enough to overflow in reward calculation.
+    // With pool 0 (apy_bps=500) and 1 year elapsed:
+    //   amount * 500 * 31_536_000 overflows i128 when amount > ~1.08e28.
+    // Use 10^29 to guarantee the second checked_mul returns None.
+    let large_amount: i128 = 100_000_000_000_000_000_000_000_000_000_i128;
+    staking_token_admin.mint(&user, &large_amount);
+    client.stake(&user, &large_amount, &0);
+
+    // Advance one year
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        timestamp: 365 * 24 * 60 * 60,
+        protocol_version: 20,
+        sequence_number: 10,
+        network_id: [0u8; 32],
+        base_reserve: 10,
+        max_entry_ttl: 31104000,
+        min_persistent_entry_ttl: 31104000,
+        min_temp_entry_ttl: 31104000,
+    });
+
+    // Claiming should panic (ArithmeticOverflow) because the numerator exceeds i128::MAX
+    client.claim(&user);
+}
+
+#[test]
+#[should_panic]
+fn test_overflow_protection_on_early_withdrawal_penalty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let (staking_token_address, _staking_token, staking_token_admin) = create_token(&env, &admin);
+    let (reward_token_address, _reward_token, _reward_token_admin) = create_token(&env, &admin);
+
+    let contract_id = env.register_contract(None, StakingRewardsContract);
+    let client = StakingRewardsContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &staking_token_address, &reward_token_address);
+
+    // Stake i128::MAX tokens; adding to an empty stake (0 + MAX) does not overflow.
+    staking_token_admin.mint(&user, &i128::MAX);
+    client.stake(&user, &i128::MAX, &0);
+
+    // Immediately unstake without advancing time → early withdrawal applies.
+    // Penalty calc: i128::MAX * 1_000 overflows i128 → should panic (ArithmeticOverflow).
+    client.unstake(&user);
+}
