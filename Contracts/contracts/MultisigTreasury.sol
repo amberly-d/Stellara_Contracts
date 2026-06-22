@@ -71,11 +71,23 @@ contract MultisigTreasury {
         return txIndex;
     }
 
-    function confirmTransaction(uint _txIndex) external onlyOwner notFrozen {
+    function confirmTransaction(uint _txIndex) external onlyOwner {
         require(_txIndex < transactions.length, "tx does not exist");
         Transaction storage txn = transactions[_txIndex];
         require(!txn.executed, "already executed");
         require(!isConfirmed[_txIndex][msg.sender], "already confirmed");
+
+        // Allow confirming unfreeze calls even when frozen; all other txs require unfrozen state.
+        if (frozen) {
+            bytes4 selector;
+            if (txn.data.length >= 4) {
+                bytes memory d = txn.data;
+                assembly { selector := mload(add(d, 32)) }
+            }
+            bool isUnfreezeCall = (txn.to == address(this) && txn.data.length >= 4 && selector == this.unfreezeInternal.selector);
+            require(isUnfreezeCall, "frozen");
+        }
+
         isConfirmed[_txIndex][msg.sender] = true;
         txn.numConfirmations += 1;
         emit ConfirmTransaction(msg.sender, _txIndex);
@@ -91,13 +103,23 @@ contract MultisigTreasury {
         emit RevokeConfirmation(msg.sender, _txIndex);
     }
 
-    function executeTransaction(uint _txIndex) external notFrozen {
+    function executeTransaction(uint _txIndex) external {
         require(_txIndex < transactions.length, "tx does not exist");
         Transaction storage txn = transactions[_txIndex];
         require(!txn.executed, "already executed");
 
         // Special-case: if this is an internal unfreeze call, require full multisig
-        bool isUnfreezeCall = (txn.to == address(this) && txn.data.length >= 4 && bytes4(txn.data[:4]) == this.unfreezeInternal.selector);
+        bytes4 selector;
+        if (txn.data.length >= 4) {
+            bytes memory d = txn.data;
+            assembly { selector := mload(add(d, 32)) }
+        }
+        bool isUnfreezeCall = (txn.to == address(this) && txn.data.length >= 4 && selector == this.unfreezeInternal.selector);
+
+        // Unfreeze calls may execute while frozen; all other calls require unfrozen state.
+        if (!isUnfreezeCall) {
+            require(!frozen, "frozen");
+        }
 
         if (isUnfreezeCall) {
             require(txn.numConfirmations >= required, "insufficient confirmations for unfreeze");
@@ -164,4 +186,11 @@ contract MultisigTreasury {
         Transaction storage t = transactions[_txIndex];
         return (t.to, t.value, t.data, t.executed, t.numConfirmations, t.created);
     }
+
+    /**
+     * @dev Storage gap to reserve space for future state variables when upgrading
+     * via a proxy pattern. Reduces storage collision risk across upgrade versions.
+     * Size: 50 slots (standard OpenZeppelin pattern).
+     */
+    uint256[50] private __gap;
 }

@@ -144,6 +144,17 @@ When ready for mainnet:
 3. Re-deploy using mainnet network configuration
 4. Update all contract addresses in frontend code
 
+## Upgrade Safety
+
+### Storage Layout Gaps
+
+`MultisigTreasury` includes a `uint256[50] private __gap` at the end of its storage layout. This is the standard OpenZeppelin pattern for upgradeable contracts: it reserves 50 storage slots so that future state variables can be appended without shifting the positions of existing variables, which would corrupt proxy storage.
+
+**Rules when upgrading:**
+- New state variables must be added **before** `__gap`, and `__gap` size must be reduced by the number of slots added.
+- Never reorder or remove existing state variables.
+- Run storage layout checks (`hardhat-upgrades` or `slither`) before deploying an upgraded implementation.
+
 ## Troubleshooting
 
 ### Build Issues
