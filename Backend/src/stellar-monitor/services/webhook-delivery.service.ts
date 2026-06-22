@@ -1,10 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import type { Queue } from 'bull';
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { WebhookConsumer } from '../entities/webhook-consumer.entity';
 import { StellarEvent } from '../entities/stellar-event.entity';
 import { ConsumerManagementService } from './consumer-management.service';
 import { EventStorageService } from './event-storage.service';
 import { DeliveryStatus, EventType } from '../types/stellar.types';
+import { WebhookDeliveryJobData } from '../processors/webhook-delivery.processor';
 
 interface DeliveryResult {
   success: boolean;
@@ -17,26 +20,19 @@ interface DeliveryResult {
 export class WebhookDeliveryService {
   private readonly logger = new Logger(WebhookDeliveryService.name);
   private readonly httpClient: AxiosInstance;
-  private readonly deliveryQueue: Array<{
-    event: StellarEvent;
-    consumer: WebhookConsumer;
-  }> = [];
-  private isProcessingQueue = false;
 
   constructor(
+    @InjectQueue('webhook-delivery') private readonly deliveryQueue: Queue<WebhookDeliveryJobData>,
     private readonly consumerManagementService: ConsumerManagementService,
     private readonly eventStorageService: EventStorageService,
   ) {
     this.httpClient = axios.create({
-      timeout: 10000, // 10 second default timeout
+      timeout: 10000,
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'Stellar-Monitor/1.0',
       },
     });
-
-    // Setup automatic queue processing
-    setInterval(() => this.processQueue(), 1000); // Process queue every second
   }
 
   async queueEventForDelivery(event: StellarEvent): Promise<void> {
@@ -49,56 +45,27 @@ export class WebhookDeliveryService {
       return;
     }
 
-    // Add event to queue for each active consumer
     for (const consumer of activeConsumers) {
-      this.deliveryQueue.push({ event, consumer });
+      await this.deliveryQueue.add(
+        { event, consumer },
+        {
+          attempts: consumer.maxRetries,
+          backoff: { type: 'exponential', delay: 1000 },
+          removeOnComplete: true,
+        },
+      );
       this.logger.debug(`Queued event ${event.id} for consumer ${consumer.id}`);
     }
-
-    // Start processing if not already running
-    if (!this.isProcessingQueue) {
-      this.processQueue();
-    }
   }
 
-  private async processQueue(): Promise<void> {
-    if (this.isProcessingQueue || this.deliveryQueue.length === 0) {
-      return;
-    }
-
-    this.isProcessingQueue = true;
-    this.logger.debug(
-      `Processing delivery queue with ${this.deliveryQueue.length} items`,
-    );
-
-    try {
-      // Process items in batches to avoid overwhelming the system
-      const batchSize = 10;
-      const batch = this.deliveryQueue.splice(0, batchSize);
-
-      await Promise.all(
-        batch.map(async ({ event, consumer }) => {
-          await this.deliverEventToConsumer(event, consumer);
-        }),
-      );
-    } catch (error) {
-      this.logger.error(
-        `Error processing delivery queue: ${error.message}`,
-        error.stack,
-      );
-    } finally {
-      this.isProcessingQueue = false;
-    }
-  }
-
-  private async deliverEventToConsumer(
+  /** Called by WebhookDeliveryProcessor — delivers one event to one consumer. */
+  async deliverEventToConsumer(
     event: StellarEvent,
     consumer: WebhookConsumer,
   ): Promise<void> {
     const startTime = Date.now();
 
     try {
-      // Check if consumer is still active (might have been deactivated during queue processing)
       const freshConsumer =
         await this.consumerManagementService.getConsumerById(consumer.id);
       if (!freshConsumer.isActive) {
@@ -109,7 +76,6 @@ export class WebhookDeliveryService {
       }
 
       const result = await this.attemptDelivery(event, freshConsumer);
-
       const responseTime = Date.now() - startTime;
 
       if (result.success) {
@@ -122,6 +88,8 @@ export class WebhookDeliveryService {
           `Failed to deliver event ${event.id} to consumer ${consumer.id}: ${result.errorMessage}`,
         );
         await this.handleFailedDelivery(event, consumer, result, responseTime);
+        // Re-throw so Bull can apply retry/backoff
+        throw new Error(result.errorMessage || 'Delivery failed');
       }
     } catch (error) {
       const responseTime = Date.now() - startTime;
@@ -132,12 +100,10 @@ export class WebhookDeliveryService {
       await this.handleFailedDelivery(
         event,
         consumer,
-        {
-          success: false,
-          errorMessage: error.message,
-        },
+        { success: false, errorMessage: error.message },
         responseTime,
       );
+      throw error;
     }
   }
 
@@ -165,29 +131,17 @@ export class WebhookDeliveryService {
       },
     };
 
-    // Add signature if consumer has a secret
     if (consumer.secret) {
       const signature = this.generateSignature(
         JSON.stringify(payload),
         consumer.secret,
       );
-      config.headers = {
-        ...config.headers,
-        'X-Signature': signature,
-      };
+      config.headers = { ...config.headers, 'X-Signature': signature };
     }
 
     try {
-      const response = await this.httpClient.post(
-        consumer.url,
-        payload,
-        config,
-      );
-
-      return {
-        success: true,
-        statusCode: response.status,
-      };
+      const response = await this.httpClient.post(consumer.url, payload, config);
+      return { success: true, statusCode: response.status };
     } catch (error) {
       return {
         success: false,
@@ -202,21 +156,16 @@ export class WebhookDeliveryService {
     consumer: WebhookConsumer,
     responseTime: number,
   ): Promise<void> {
-    // Update event status
     await this.eventStorageService.updateEventStatus(
       event.id,
       DeliveryStatus.DELIVERED,
       consumer.id,
     );
-
-    // Update consumer stats
     await this.consumerManagementService.updateDeliveryStats(consumer.id, true);
 
-    // Mark event as processed if delivered to all consumers
     const activeConsumers =
       await this.consumerManagementService.getActiveConsumers();
-    const deliveredCount = (event.deliveredTo?.length || 0) + 1; // +1 for current delivery
-
+    const deliveredCount = (event.deliveredTo?.length || 0) + 1;
     if (deliveredCount >= activeConsumers.length) {
       await this.eventStorageService.markEventAsProcessed(event.id);
     }
@@ -228,52 +177,23 @@ export class WebhookDeliveryService {
     result: DeliveryResult,
     responseTime: number,
   ): Promise<void> {
-    // Update consumer stats
-    await this.consumerManagementService.updateDeliveryStats(
-      consumer.id,
-      false,
-    );
+    await this.consumerManagementService.updateDeliveryStats(consumer.id, false);
 
     const attemptNumber = event.deliveryAttempts + 1;
-
     if (attemptNumber >= consumer.maxRetries) {
-      // Max retries reached - mark as failed
       await this.eventStorageService.updateEventStatus(
         event.id,
         DeliveryStatus.FAILED,
         consumer.id,
         result.errorMessage,
       );
-
       this.logger.warn(
         `Max retries reached for event ${event.id} to consumer ${consumer.id}`,
       );
-    } else {
-      // Schedule retry with exponential backoff
-      const delay = this.calculateBackoffDelay(attemptNumber);
-      this.logger.debug(
-        `Scheduling retry ${attemptNumber}/${consumer.maxRetries} for event ${event.id} in ${delay}ms`,
-      );
-
-      setTimeout(() => {
-        this.deliveryQueue.push({ event, consumer });
-        if (!this.isProcessingQueue) {
-          this.processQueue();
-        }
-      }, delay);
     }
   }
 
-  private calculateBackoffDelay(attempt: number): number {
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, etc.
-    const baseDelay = 1000; // 1 second
-    const maxDelay = 300000; // 5 minutes max
-    return Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
-  }
-
   private generateSignature(payload: string, secret: string): string {
-    // In production, use proper HMAC signing
-    // This is a simplified example
     return require('crypto')
       .createHmac('sha256', secret)
       .update(payload)
@@ -285,10 +205,7 @@ export class WebhookDeliveryService {
       await this.consumerManagementService.getConsumerById(consumerId);
 
     if (!consumer.isActive) {
-      return {
-        success: false,
-        errorMessage: 'Consumer is not active',
-      };
+      return { success: false, errorMessage: 'Consumer is not active' };
     }
 
     const testEvent: Partial<StellarEvent> = {
@@ -298,17 +215,14 @@ export class WebhookDeliveryService {
       timestamp: new Date(),
       transactionHash: 'test-transaction-hash',
       sourceAccount: 'test-source-account',
-      payload: {
-        test: true,
-        message: 'This is a test event',
-      },
+      payload: { test: true, message: 'This is a test event' },
     };
 
     return this.attemptDelivery(testEvent as StellarEvent, consumer);
   }
 
-  getQueueSize(): number {
-    return this.deliveryQueue.length;
+  async getQueueSize(): Promise<number> {
+    return this.deliveryQueue.count();
   }
 
   async getDeliveryStats(): Promise<{
@@ -316,12 +230,14 @@ export class WebhookDeliveryService {
     activeConsumers: number;
     pendingEvents: number;
   }> {
-    const activeConsumers =
-      await this.consumerManagementService.getActiveConsumers();
-    const pendingEvents = await this.eventStorageService.getPendingEvents();
+    const [activeConsumers, pendingEvents, queueSize] = await Promise.all([
+      this.consumerManagementService.getActiveConsumers(),
+      this.eventStorageService.getPendingEvents(),
+      this.deliveryQueue.count(),
+    ]);
 
     return {
-      queueSize: this.deliveryQueue.length,
+      queueSize,
       activeConsumers: activeConsumers.length,
       pendingEvents: pendingEvents.length,
     };
