@@ -9,6 +9,12 @@ describe('ConsumerManagementService', () => {
   let service: ConsumerManagementService;
   let repository: Repository<WebhookConsumer>;
 
+  const mockQueryBuilder = {
+    where: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    getMany: jest.fn(),
+  };
+
   const mockConsumerRepository = {
     create: jest.fn(),
     save: jest.fn(),
@@ -16,6 +22,7 @@ describe('ConsumerManagementService', () => {
     find: jest.fn(),
     remove: jest.fn(),
     count: jest.fn(),
+    createQueryBuilder: jest.fn(() => mockQueryBuilder),
   };
 
   beforeEach(async () => {
@@ -72,12 +79,13 @@ describe('ConsumerManagementService', () => {
   describe('getAllConsumers', () => {
     it('should return all consumers', async () => {
       const consumers = [new WebhookConsumer(), new WebhookConsumer()];
-      mockConsumerRepository.find.mockResolvedValue(consumers);
+      mockQueryBuilder.getMany.mockResolvedValue(consumers);
 
       const result = await service.getAllConsumers();
 
       expect(result).toEqual(consumers);
-      expect(mockConsumerRepository.find).toHaveBeenCalled();
+      expect(mockConsumerRepository.createQueryBuilder).toHaveBeenCalled();
+      expect(mockQueryBuilder.getMany).toHaveBeenCalled();
     });
   });
 });

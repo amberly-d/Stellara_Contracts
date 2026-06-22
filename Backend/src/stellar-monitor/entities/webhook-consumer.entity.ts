@@ -61,4 +61,13 @@ export class WebhookConsumer {
 
   @Column({ default: 0 })
   failedDeliveries: number;
+
+  // Number of delivery attempts made for the most recent in-flight event.
+  // Reset to 0 on a successful delivery; incremented on every retry.
+  @Column({ default: 0 })
+  deliveryAttempts: number;
+
+  // Last error message recorded for a failed/dead-lettered delivery.
+  @Column({ type: 'text', nullable: true })
+  lastError?: string;
 }

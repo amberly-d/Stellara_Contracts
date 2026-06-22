@@ -9,6 +9,7 @@ import {
   Length,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { IsSafeWebhookUrl } from '../validators/is-safe-webhook-url.validator';
 
 export class CreateConsumerDto {
   @IsString()
@@ -16,6 +17,7 @@ export class CreateConsumerDto {
   name: string;
 
   @IsUrl({ require_protocol: true })
+  @IsSafeWebhookUrl()
   @Length(1, 500)
   url: string;
 

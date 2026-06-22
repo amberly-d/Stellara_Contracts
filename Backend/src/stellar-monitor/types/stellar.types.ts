@@ -11,6 +11,7 @@ export enum DeliveryStatus {
   DELIVERED = 'delivered',
   FAILED = 'failed',
   RETRYING = 'retrying',
+  DEAD_LETTER = 'dead_letter',
 }
 
 export enum ConsumerStatus {

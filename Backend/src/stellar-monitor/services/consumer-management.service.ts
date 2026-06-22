@@ -185,6 +185,21 @@ export class ConsumerManagementService {
     return this.consumerRepository.save(consumer);
   }
 
+  /**
+   * Records delivery progress (retry attempts and last error) on a consumer.
+   * Pass `attempts = 0` and `lastError = null` to reset after a success.
+   */
+  async recordDeliveryProgress(
+    consumerId: string,
+    attempts: number,
+    lastError: string | null,
+  ): Promise<WebhookConsumer> {
+    const consumer = await this.getConsumerById(consumerId);
+    consumer.deliveryAttempts = attempts;
+    consumer.lastError = lastError ?? undefined;
+    return this.consumerRepository.save(consumer);
+  }
+
   async getConsumerHealthStats(consumerId: string): Promise<{
     successRate: number;
     recentFailures: number;
