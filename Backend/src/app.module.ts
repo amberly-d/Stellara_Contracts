@@ -7,6 +7,8 @@ import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
+import { buildTypeOrmOptions } from './database/database.config';
+
 import { RedisModule } from './redis/redis.module';
 import { VoiceModule } from './voice/voice.module';
 import { StellarMonitorModule } from './stellar-monitor/stellar-monitor.module';
@@ -40,7 +42,7 @@ import { HealthModule } from './health/health.module';
 
     ScheduleModule.forRoot(),
 
-    TypeOrmModule.forRootAsync({
+TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -60,10 +62,18 @@ import { HealthModule } from './health/health.module';
           ApiToken,
           AuditLog,
           AuditLogArchive,
-          VoiceJob,
+VoiceJob,
         ],
-        synchronize: configService.get('NODE_ENV') === 'development',
+        synchronize: false,
         logging: configService.get('NODE_ENV') === 'development',
+        extra: {
+          max: 20,
+          min: 5,
+          idleTimeoutMillis: 30000,
+        },
+        retryAttempts: 5,
+        retryDelay: 3000,
+        migrations: ['src/database/migrations/*{.ts,.js}'],
       }),
     }),
 

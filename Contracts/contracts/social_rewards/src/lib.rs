@@ -99,13 +99,19 @@ impl SocialRewardsContract {
         Ok(())
     }
 
-    /// Record an engagement activity
+    /// Record an engagement activity.
+    ///
+    /// Requires the `user` address to authorise this call so that no third party
+    /// can fabricate engagement history for another account.
     pub fn record_engagement(
         env: Env,
         user: Address,
         engagement_type: Symbol,
         metadata: i128,
     ) -> Result<u64, RewardError> {
+        // SECURITY: only the user themselves may record their own engagement.
+        user.require_auth();
+
         let init_key = symbol_short!("init");
         if !env.storage().persistent().has(&init_key) {
             return Err(RewardError::NotInitialized);
@@ -234,12 +240,11 @@ impl SocialRewardsContract {
         // Create reward symbol before moving env
         let reward_type = Symbol::new(&env, "reward");
 
-        // Record engagement as generic reward activity
+        // Record engagement as generic reward activity; caller must have authorised user.
         let _engagement_id = Self::record_engagement(env, user, reward_type, amount)?;
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -262,7 +267,15 @@ mod tests {
         )
     }
 
-    fn setup() -> (Env, Address, Address, Address, TokenClient<'static>, StellarAssetClient<'static>, SocialRewardsContractClient<'static>) {
+    fn setup() -> (
+        Env,
+        Address,
+        Address,
+        Address,
+        TokenClient<'static>,
+        StellarAssetClient<'static>,
+        SocialRewardsContractClient<'static>,
+    ) {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
@@ -290,9 +303,10 @@ mod tests {
         (env, admin, user, token_addr, token_client, token_admin, client)
     }
 
+    // ── Token transfer tests (PR) ────────────────────────────────────────────
+
     #[test]
     fn test_init_stores_reward_token() {
-        // Should not panic — init sets the reward token
         let (_env, _admin, _user, _token_addr, _token, _token_admin, _client) = setup();
     }
 
@@ -300,17 +314,11 @@ mod tests {
     fn test_distribute_reward_transfers_tokens() {
         let (_env, admin, user, _token_addr, token, _token_admin, client) = setup();
 
-        // Record an engagement for the user
-        let eng_id = client.record_engagement(
-            &user,
-            &Symbol::new(&_env, "like"),
-            &100,
-        );
+        let eng_id = client.record_engagement(&user, &Symbol::new(&_env, "like"), &100);
 
         let admin_before = token.balance(&admin);
         let user_before = token.balance(&user);
 
-        // Distribute 500 tokens
         client.distribute_reward(&admin, &eng_id, &500);
 
         assert_eq!(token.balance(&admin), admin_before - 500);
@@ -322,10 +330,8 @@ mod tests {
         let (_env, admin, user, _token_addr, token, _token_admin, client) = setup();
 
         let eng_id = client.record_engagement(&user, &Symbol::new(&_env, "post"), &50);
-
         client.distribute_reward(&admin, &eng_id, &200);
 
-        // Balances confirm tokens actually moved
         assert_eq!(token.balance(&user), 200);
     }
 
@@ -335,8 +341,6 @@ mod tests {
         let (_env, admin, user, _token_addr, _token, _token_admin, client) = setup();
 
         let eng_id = client.record_engagement(&user, &Symbol::new(&_env, "share"), &10);
-
-        // Try to distribute more than admin holds (10_000 minted)
         client.distribute_reward(&admin, &eng_id, &100_000);
     }
 
@@ -354,5 +358,54 @@ mod tests {
     fn test_distribute_reward_fails_for_unknown_engagement() {
         let (_env, admin, _user, _token_addr, _token, _token_admin, client) = setup();
         client.distribute_reward(&admin, &999, &100);
+    }
+
+    // ── Auth and engagement tests (upstream) ─────────────────────────────────
+
+    #[test]
+    fn authorized_user_records_own_engagement() {
+        let (env, _, _, _, _, _, client) = setup();
+        let user = Address::generate(&env);
+        let etype = Symbol::new(&env, "like");
+        let id = client.record_engagement(&user, &etype, &50);
+        assert_eq!(id, 1u64);
+    }
+
+    #[test]
+    fn sequential_engagements_get_incrementing_ids() {
+        let (env, _, _, _, _, _, client) = setup();
+        let user = Address::generate(&env);
+        let etype = Symbol::new(&env, "share");
+        assert_eq!(client.record_engagement(&user, &etype, &10), 1u64);
+        assert_eq!(client.record_engagement(&user, &etype, &20), 2u64);
+    }
+
+    #[test]
+    fn negative_metadata_is_rejected() {
+        let (env, _, _, _, _, _, client) = setup();
+        let user = Address::generate(&env);
+        let etype = Symbol::new(&env, "vote");
+        let result = client.try_record_engagement(&user, &etype, &-1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[should_panic]
+    fn unauthorized_caller_cannot_record_engagement_for_another_user() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let (token_addr, _, _) = create_token(&env, &admin);
+
+        let id = env.register_contract(None, SocialRewardsContract);
+        let client = SocialRewardsContractClient::new(&env, &id);
+        env.mock_all_auths();
+        client.init(&admin, &token_addr);
+
+        // Fresh env with no mock_all_auths — require_auth must panic.
+        let env2 = Env::default();
+        let client2 = SocialRewardsContractClient::new(&env2, &id);
+        let victim = Address::generate(&env2);
+        let etype = Symbol::new(&env2, "like");
+        client2.record_engagement(&victim, &etype, &10);
     }
 }

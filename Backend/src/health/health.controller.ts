@@ -7,13 +7,14 @@ import {
 import { DataSource } from 'typeorm';
 import { RedisService } from '../redis/redis.service';
 import { StellarEventMonitorService } from '../stellar-monitor/services/stellar-event-monitor.service';
+import { DatabaseHealthIndicator } from './database-health.indicator';
 
 @Controller('health')
 export class HealthController {
   private readonly logger = new Logger(HealthController.name);
 
   constructor(
-    private readonly dataSource: DataSource,
+    private readonly databaseHealthIndicator: DatabaseHealthIndicator,
     private readonly redisService: RedisService,
     private readonly stellarMonitorService: StellarEventMonitorService,
   ) {}
@@ -28,12 +29,9 @@ export class HealthController {
     const checks: Record<string, { status: string; message?: string; [key: string]: any }> = {};
     let allHealthy = true;
 
-    try {
-      await this.dataSource.query('SELECT 1');
-      checks.database = { status: 'ok' };
-    } catch (err: any) {
-      this.logger.warn(`Database health check failed: ${err.message}`);
-      checks.database = { status: 'error', message: err.message };
+    const databaseCheck = await this.databaseHealthIndicator.isHealthy();
+    checks.database = databaseCheck;
+    if (databaseCheck.status === 'error') {
       allHealthy = false;
     }
 

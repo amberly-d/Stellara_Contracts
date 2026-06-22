@@ -147,7 +147,7 @@ export class WorkflowExecutionService {
       return (
         (await this.workflowRepository.findOne({
           where: { id: savedWorkflow.id },
-          relations: ['steps'],
+          relations: { steps: true },
         })) ?? savedWorkflow
       );
     } finally {
@@ -576,7 +576,7 @@ export class WorkflowExecutionService {
     while (Date.now() - startedAt < timeoutMs) {
       const workflow = await this.workflowRepository.findOne({
         where: { idempotencyKey },
-        relations: ['steps'],
+        relations: { steps: true },
       });
 
       if (workflow) {

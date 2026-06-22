@@ -26,6 +26,7 @@ pub enum ContractError {
     InsufficientBalance = 6,
     StillLocked = 7,
     NothingToClaim = 8,
+    ArithmeticOverflow = 9,
 }
 
 #[contracttype]
@@ -133,7 +134,10 @@ impl StakingRewardsContract {
 
         // For simplicity, if they already have a stake, they must unstake first or we just update
         // In this implementation, we allow adding to stake but reset the timer for the whole amount
-        user_stake.amount += amount;
+        user_stake.amount = user_stake
+            .amount
+            .checked_add(amount)
+            .ok_or(ContractError::ArithmeticOverflow)?;
         user_stake.pool_id = pool_id;
         user_stake.start_timestamp = env.ledger().timestamp();
         user_stake.last_claim_timestamp = env.ledger().timestamp();
@@ -203,15 +207,20 @@ impl StakingRewardsContract {
 
         let pool = pools.get_unchecked(user_stake.pool_id);
         let now = env.ledger().timestamp();
-        let elapsed = now - user_stake.start_timestamp;
+        let elapsed = now.saturating_sub(user_stake.start_timestamp);
 
         let mut principal_to_return = user_stake.amount;
 
         // Apply early withdrawal penalty if lockup hasn't expired
         if elapsed < pool.lockup_seconds {
-            let penalty_bps = 1000; // 10% penalty
-            let penalty_amount = (principal_to_return * penalty_bps as i128) / 10000;
-            principal_to_return -= penalty_amount;
+            let penalty_bps: i128 = 1000; // 10% penalty
+            let penalty_amount = principal_to_return
+                .checked_mul(penalty_bps)
+                .and_then(|v| v.checked_div(10000))
+                .ok_or(ContractError::ArithmeticOverflow)?;
+            principal_to_return = principal_to_return
+                .checked_sub(penalty_amount)
+                .ok_or(ContractError::ArithmeticOverflow)?;
 
             // Penalty stays in the contract (could be sent to a treasury)
         }
@@ -294,7 +303,10 @@ impl StakingRewardsContract {
             return Err(ContractError::Unauthorized); // Or a more specific error
         }
 
-        user_stake.amount += reward_amount;
+        user_stake.amount = user_stake
+            .amount
+            .checked_add(reward_amount)
+            .ok_or(ContractError::ArithmeticOverflow)?;
         user_stake.last_claim_timestamp = env.ledger().timestamp();
         env.storage().persistent().set(&key, &user_stake);
 
@@ -335,20 +347,30 @@ fn calculate_rewards(env: &Env, user_stake: &UserStake) -> Result<i128, Contract
 
     let pool = pools.get(user_stake.pool_id).unwrap();
     let now = env.ledger().timestamp();
-    let elapsed_seconds = now - user_stake.last_claim_timestamp;
+    let elapsed_seconds = now.saturating_sub(user_stake.last_claim_timestamp);
 
     if elapsed_seconds == 0 {
         return Ok(0);
     }
 
     // Reward = Principal * APY * (elapsed / seconds_in_year)
-    // APY is in basis points
+    // APY is in basis points (e.g. 500 = 5%)
     let seconds_in_year: u64 = 365 * 24 * 60 * 60;
 
-    // Scale precision for calculation: (amount * apy * seconds) / (10000 * seconds_in_year)
-    // Using i128 to prevent overflow in Intermediate calculation
-    let reward = (user_stake.amount * pool.apy_bps as i128 * elapsed_seconds as i128)
-        / (10000i128 * seconds_in_year as i128);
+    // Checked arithmetic prevents silent overflow on large stakes, high APY, or long durations
+    let amount_times_apy = user_stake
+        .amount
+        .checked_mul(pool.apy_bps as i128)
+        .ok_or(ContractError::ArithmeticOverflow)?;
+    let numerator = amount_times_apy
+        .checked_mul(elapsed_seconds as i128)
+        .ok_or(ContractError::ArithmeticOverflow)?;
+    let denominator = 10000_i128
+        .checked_mul(seconds_in_year as i128)
+        .ok_or(ContractError::ArithmeticOverflow)?;
+    let reward = numerator
+        .checked_div(denominator)
+        .ok_or(ContractError::ArithmeticOverflow)?;
 
     Ok(reward)
 }

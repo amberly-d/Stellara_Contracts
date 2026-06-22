@@ -61,15 +61,6 @@ impl MockTokenContract {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: assert at least one published event matches the given topic symbol.
-//
-// soroban_sdk::Env::events().all() returns:
-//   Vec<(Address, soroban_sdk::Vec<Val>, Val)>
-//             contract  topics           data
-//
-// Long symbols (>9 chars) are heap-allocated in the Soroban test VM — two
-// Symbol::new calls for the same string produce different object handles.
-// The only stable comparison is to convert both sides to their string
-// representation via soroban_sdk::Symbol::to_string.
 // ─────────────────────────────────────────────────────────────────────────────
 fn assert_event_emitted(env: &Env, expected_topic: Symbol) {
     use soroban_sdk::TryFromVal;
@@ -106,6 +97,9 @@ fn test_academy_rewards_trigger_social_rewards() {
     let social_id = env.register_contract(None, SocialRewardsContract);
     let social = social_rewards::SocialRewardsContractClient::new(&env, &social_id);
 
+    // Register a mock token to satisfy social_rewards init (token not used in this test)
+    let token_id = env.register_contract(None, MockTokenContract);
+
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let cb_config = CircuitBreakerConfig {
@@ -115,7 +109,7 @@ fn test_academy_rewards_trigger_social_rewards() {
     };
 
     academy.initialize(&admin, &cb_config);
-    social.init(&admin);
+    social.init(&admin, &token_id);
 
     academy.create_badge_type(
         &admin,
@@ -141,10 +135,8 @@ fn test_academy_rewards_trigger_social_rewards() {
     assert_eq!(record.discount_applied, 500);
 
     // ── Event assertions ─────────────────────────────────────────────────────
-    // academy-rewards uses Symbol::new (not symbol_short!) for its topics
     assert_event_emitted(&env, Symbol::new(&env, "badge_minted"));
     assert_event_emitted(&env, Symbol::new(&env, "badge_redeemed"));
-    // social_rewards emits "eng_rec" on record_engagement; add_reward is silent
     assert_event_emitted(&env, Symbol::new(&env, "eng_rec"));
 }
 
@@ -204,7 +196,6 @@ fn test_trading_interacts_with_fee_distribution() {
     assert_eq!(stats.total_trades, 1);
     assert_eq!(stats.total_volume, 250);
 
-    // ── Event assertions ─────────────────────────────────────────────────────
     assert_event_emitted(&env, Symbol::new(&env, "trade"));
     assert_event_emitted(&env, Symbol::new(&env, "fee_col"));
 }
@@ -262,7 +253,6 @@ fn test_messaging_notifications_from_other_contract_flows() {
     assert_eq!(notifications.len(), 1);
     assert_eq!(notifications.get(0).unwrap().payload, payload);
 
-    // ── Event assertions ─────────────────────────────────────────────────────
     assert_event_emitted(&env, Symbol::new(&env, "msg_sent"));
     assert_event_emitted(&env, Symbol::new(&env, "badge_redeemed"));
 }
@@ -321,74 +311,3 @@ fn test_shared_governance_module_across_contracts() {
     assert_eq!(trade_status, ProposalStatus::Approved);
     assert_eq!(msg_status, ProposalStatus::Approved);
 }
-
-// #[test]
-// fn test_replay_message_on_messaging_rejected() {
-//     let env = Env::default();
-//     env.ledger().with_mut(|li| li.timestamp = 1000);
-//     env.mock_all_auths();
-
-//     let messaging_id = env.register_contract(None, UpgradeableMessagingContract);
-//     let messaging = messaging::UpgradeableMessagingContractClient::new(&env, &messaging_id);
-
-//     let admin = Address::generate(&env);
-//     let approver = Address::generate(&env);
-//     let executor = Address::generate(&env);
-
-//     let mut approvers = Vec::new(&env);
-//     approvers.push_back(approver.clone());
-
-//     let cb_config = CircuitBreakerConfig {
-//         max_volume_per_period: 10_000_000,
-//         max_tx_count_per_period: 100,
-//         period_duration: 3600,
-//     };
-
-//     messaging.init(&admin, &approvers, &executor, &cb_config);
-
-//     let alice = Address::generate(&env);
-//     let bob = Address::generate(&env);
-//     let payload = String::from_str(&env, "adversarial replay");
-
-//     let first = messaging.send_message(&alice, &bob, &payload);
-//     assert_eq!(first, 1);
-
-//     let replay = messaging.try_send_message(&alice, &bob, &payload);
-//     assert!(replay.is_err());
-// }
-
-// #[test]
-// fn test_reentrancy_guard_blocks_internal_reentry() {
-//     let env = Env::default();
-//     env.ledger().with_mut(|li| li.timestamp = 1000);
-//     env.mock_all_auths();
-
-//     let messaging_id = env.register_contract(None, UpgradeableMessagingContract);
-//     let messaging = messaging::UpgradeableMessagingContractClient::new(&env, &messaging_id);
-
-//     let admin = Address::generate(&env);
-//     let approver = Address::generate(&env);
-//     let executor = Address::generate(&env);
-
-//     let mut approvers = Vec::new(&env);
-//     approvers.push_back(approver.clone());
-
-//     let cb_config = CircuitBreakerConfig {
-//         max_volume_per_period: 10_000_000,
-//         max_tx_count_per_period: 100,
-//         period_duration: 3600,
-//     };
-
-//     messaging.init(&admin, &approvers, &executor, &cb_config);
-
-//     let alice = Address::generate(&env);
-//     let bob = Address::generate(&env);
-//     messaging.send_message(&alice, &bob, &String::from_str(&env, "first"));
-
-//     ReentrancyGuard::enter(&env);
-//     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-//         messaging.mark_as_read(&bob, &1u64);
-//     }));
-//     assert!(result.is_err(), "Reentrancy should be blocked");
-//     ReentrancyGuard::exit(&env);
-// }
