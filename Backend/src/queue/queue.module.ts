@@ -5,8 +5,10 @@ import { QueueService } from './services/queue.service';
 import { DeployContractProcessor } from './processors/deploy-contract.processor';
 import { ProcessTtsProcessor } from './processors/process-tts.processor';
 import { IndexMarketNewsProcessor } from './processors/index-market-news.processor';
+import { DeadLetterProcessor } from './processors/dead-letter.processor';
 import { QueueAdminController } from './controllers/queue-admin.controller';
 import { RedisModule } from '../redis/redis.module';
+import { ObservabilityModule } from '../observability/observability.module';
 
 @Module({
   imports: [
@@ -33,8 +35,10 @@ import { RedisModule } from '../redis/redis.module';
       { name: 'deploy-contract' },
       { name: 'process-tts' },
       { name: 'index-market-news' },
+      { name: 'failed-jobs' },
     ),
     RedisModule,
+    ObservabilityModule,
   ],
   controllers: [QueueAdminController],
   providers: [
@@ -42,6 +46,7 @@ import { RedisModule } from '../redis/redis.module';
     DeployContractProcessor,
     ProcessTtsProcessor,
     IndexMarketNewsProcessor,
+    DeadLetterProcessor,
   ],
   exports: [QueueService],
 })

@@ -1,7 +1,11 @@
-import { Processor, Process } from '@nestjs/bull';
+import { Processor, Process, OnQueueFailed } from '@nestjs/bull';
 import type { Job } from 'bull';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import type { Queue } from 'bull';
 import { JobResult } from '../types/job.types';
+import { ValidationError } from '../types/errors';
+import { MetricsService } from '../../observability/services/metrics.service';
 
 interface IndexMarketNewsData {
   source: string;
@@ -23,43 +27,49 @@ interface NewsItem {
 export class IndexMarketNewsProcessor {
   private readonly logger = new Logger(IndexMarketNewsProcessor.name);
 
+  constructor(
+    @InjectQueue('failed-jobs') private readonly dlqQueue: Queue,
+    @Optional() @Inject(MetricsService) private readonly metrics?: MetricsService,
+  ) {}
+
   @Process()
   async handleIndexMarketNews(
     job: Job<IndexMarketNewsData>,
   ): Promise<JobResult> {
     const { source, startDate, endDate, limit = 100 } = job.data;
+    const start = Date.now();
 
     this.logger.log(
       `Processing index-market-news job ${job.id}: source=${source}, limit=${limit}`,
     );
 
+    this.metrics?.recordJobStart('index-market-news');
+
     try {
-      // Update progress
       await job.progress(10);
 
-      // Validate news data
       if (!source) {
-        throw new Error('Missing required field: source');
+        throw new ValidationError('Missing required field: source');
       }
 
       this.logger.debug(`Fetching market news from ${source}...`);
       await job.progress(20);
 
-      // Simulate fetching news
       const newsItems = await this.fetchNews(source, startDate, endDate, limit);
       await job.progress(50);
 
-      // Simulate parsing and enrichment
       const enrichedNews = await this.enrichNews(newsItems);
       await job.progress(75);
 
-      // Simulate indexing
       const indexResult = await this.indexNews(enrichedNews);
       await job.progress(100);
 
       this.logger.log(
         `Market news indexed: ${indexResult.indexedCount} items, ${indexResult.failedCount} failed`,
       );
+
+      const duration = (Date.now() - start) / 1000;
+      this.metrics?.recordJobCompleted('index-market-news', duration);
 
       return {
         success: true,
@@ -72,11 +82,32 @@ export class IndexMarketNewsProcessor {
         },
       };
     } catch (error) {
+      const duration = (Date.now() - start) / 1000;
+      this.metrics?.recordJobFailed('index-market-news', duration, error.constructor.name);
       this.logger.error(
         `Failed to index market news: ${error.message}`,
         error.stack,
       );
       throw error;
+    }
+  }
+
+  @OnQueueFailed()
+  async onFailed(job: Job<IndexMarketNewsData>, err: Error): Promise<void> {
+    const attemptsExhausted = job.attemptsMade >= (job.opts.attempts ?? 1);
+    const isPermanent = (err as any).retryable === false;
+
+    if (attemptsExhausted || isPermanent) {
+      this.logger.error(
+        `Job ${job.id} exhausted retries or is permanent — routing to DLQ`,
+        err.stack,
+      );
+      await this.dlqQueue.add({
+        originalQueue: 'index-market-news',
+        originalJobId: job.id,
+        failedReason: err.message,
+        payload: job.data,
+      });
     }
   }
 
@@ -86,7 +117,6 @@ export class IndexMarketNewsProcessor {
     endDate?: string,
     limit?: number,
   ): Promise<NewsItem[]> {
-    // Simulate fetching news from API
     return new Promise((resolve) => {
       setTimeout(() => {
         const newsItems: NewsItem[] = [];
@@ -108,7 +138,6 @@ export class IndexMarketNewsProcessor {
   }
 
   private async enrichNews(newsItems: NewsItem[]): Promise<NewsItem[]> {
-    // Simulate enriching news with sentiment analysis, keywords, etc.
     return new Promise((resolve) => {
       setTimeout(() => {
         const enriched = newsItems.map((item) => ({
@@ -123,17 +152,11 @@ export class IndexMarketNewsProcessor {
   private async indexNews(
     newsItems: NewsItem[],
   ): Promise<{ indexedCount: number; failedCount: number }> {
-    // Simulate indexing in search engine/database
     return new Promise((resolve) => {
       setTimeout(() => {
-        // Simulate 95% success rate
         const failedCount = Math.floor(newsItems.length * 0.05);
         const indexedCount = newsItems.length - failedCount;
-
-        resolve({
-          indexedCount,
-          failedCount,
-        });
+        resolve({ indexedCount, failedCount });
       }, 1500);
     });
   }

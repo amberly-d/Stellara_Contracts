@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -33,6 +33,8 @@ import { AuditLog, AuditLogArchive } from './audit/audit.entity';
 import { VoiceJob } from './voice/entities/voice-job.entity';
 import { ThrottleModule } from './throttle/throttle.module';
 import { HealthModule } from './health/health.module';
+import { ObservabilityModule } from './observability/observability.module';
+import { TracingInterceptor } from './observability/interceptors/tracing.interceptor';
 
 @Module({
   imports: [
@@ -88,6 +90,7 @@ VoiceJob,
     ThrottleModule,
     AiModule,
     HealthModule,
+    ObservabilityModule,
   ],
 
   controllers: [AppController],
@@ -103,6 +106,15 @@ VoiceJob,
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
+    },
+
+    /**
+     * Global tracing interceptor — propagates trace IDs and records
+     * HTTP request metrics via ObservabilityModule.
+     */
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TracingInterceptor,
     },
   ],
 })

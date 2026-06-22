@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bull';
 import { IndexMarketNewsProcessor } from './index-market-news.processor';
 
 describe('IndexMarketNewsProcessor', () => {
@@ -12,12 +13,19 @@ describe('IndexMarketNewsProcessor', () => {
       endDate: '2024-01-31',
       limit: 50,
     },
+    attemptsMade: 1,
+    opts: { attempts: 3 },
     progress: jest.fn(),
+    queue: { name: 'index-market-news' },
   };
 
   beforeEach(async () => {
+    mockJob.progress = jest.fn();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [IndexMarketNewsProcessor],
+      providers: [
+        IndexMarketNewsProcessor,
+        { provide: getQueueToken('failed-jobs'), useValue: { add: jest.fn() } },
+      ],
     }).compile();
 
     processor = module.get<IndexMarketNewsProcessor>(IndexMarketNewsProcessor);
@@ -25,6 +33,12 @@ describe('IndexMarketNewsProcessor', () => {
 
   describe('handleIndexMarketNews', () => {
     it('should successfully index market news', async () => {
+      mockJob.data = {
+        source: 'coingecko',
+        startDate: '2024-01-01',
+        endDate: '2024-01-31',
+        limit: 50,
+      };
       const result = await processor.handleIndexMarketNews(mockJob as any);
 
       expect(result.success).toBe(true);
@@ -35,6 +49,12 @@ describe('IndexMarketNewsProcessor', () => {
     });
 
     it('should update progress', async () => {
+      mockJob.data = {
+        source: 'coingecko',
+        startDate: '2024-01-01',
+        endDate: '2024-01-31',
+        limit: 50,
+      };
       await processor.handleIndexMarketNews(mockJob as any);
 
       expect(mockJob.progress).toHaveBeenCalledWith(10);
@@ -70,12 +90,24 @@ describe('IndexMarketNewsProcessor', () => {
     });
 
     it('should include source in result', async () => {
+      mockJob.data = {
+        source: 'coingecko',
+        startDate: '2024-01-01',
+        endDate: '2024-01-31',
+        limit: 50,
+      };
       const result = await processor.handleIndexMarketNews(mockJob as any);
 
       expect(result.data.source).toBe('coingecko');
     });
 
     it('should return reasonable indexedCount and failedCount', async () => {
+      mockJob.data = {
+        source: 'coingecko',
+        startDate: '2024-01-01',
+        endDate: '2024-01-31',
+        limit: 50,
+      };
       const result = await processor.handleIndexMarketNews(mockJob as any);
 
       expect(result.data.indexedCount).toBeGreaterThanOrEqual(0);

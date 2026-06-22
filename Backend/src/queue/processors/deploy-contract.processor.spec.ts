@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bull';
 import { DeployContractProcessor } from './deploy-contract.processor';
 
 describe('DeployContractProcessor', () => {
@@ -12,13 +13,20 @@ describe('DeployContractProcessor', () => {
       network: 'testnet',
       initializer: 'init-func',
     },
+    attemptsMade: 1,
+    opts: { attempts: 3 },
     progress: jest.fn(),
     log: jest.fn(),
+    queue: { name: 'deploy-contract' },
   };
 
   beforeEach(async () => {
+    mockJob.progress = jest.fn();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [DeployContractProcessor],
+      providers: [
+        DeployContractProcessor,
+        { provide: getQueueToken('failed-jobs'), useValue: { add: jest.fn() } },
+      ],
     }).compile();
 
     processor = module.get<DeployContractProcessor>(DeployContractProcessor);
@@ -26,6 +34,12 @@ describe('DeployContractProcessor', () => {
 
   describe('handleDeployContract', () => {
     it('should successfully deploy contract', async () => {
+      mockJob.data = {
+        contractName: 'TestContract',
+        contractCode: 'contract code here',
+        network: 'testnet',
+        initializer: 'init-func',
+      };
       const result = await processor.handleDeployContract(mockJob as any);
 
       expect(result.success).toBe(true);
@@ -35,6 +49,12 @@ describe('DeployContractProcessor', () => {
     });
 
     it('should update progress', async () => {
+      mockJob.data = {
+        contractName: 'TestContract',
+        contractCode: 'contract code here',
+        network: 'testnet',
+        initializer: 'init-func',
+      };
       await processor.handleDeployContract(mockJob as any);
 
       expect(mockJob.progress).toHaveBeenCalledWith(10);
@@ -71,12 +91,24 @@ describe('DeployContractProcessor', () => {
     });
 
     it('should include network in result', async () => {
+      mockJob.data = {
+        contractName: 'TestContract',
+        contractCode: 'contract code here',
+        network: 'testnet',
+        initializer: 'init-func',
+      };
       const result = await processor.handleDeployContract(mockJob as any);
 
       expect(result.data.network).toBe('testnet');
     });
 
     it('should include contract name in result', async () => {
+      mockJob.data = {
+        contractName: 'TestContract',
+        contractCode: 'contract code here',
+        network: 'testnet',
+        initializer: 'init-func',
+      };
       const result = await processor.handleDeployContract(mockJob as any);
 
       expect(result.data.contractName).toBe('TestContract');

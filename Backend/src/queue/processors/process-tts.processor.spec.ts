@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bull';
 import { ProcessTtsProcessor } from './process-tts.processor';
 
 describe('ProcessTtsProcessor', () => {
@@ -13,12 +14,19 @@ describe('ProcessTtsProcessor', () => {
       speed: 1.0,
       sessionId: 'session-123',
     },
+    attemptsMade: 1,
+    opts: { attempts: 3 },
     progress: jest.fn(),
+    queue: { name: 'process-tts' },
   };
 
   beforeEach(async () => {
+    mockJob.progress = jest.fn();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ProcessTtsProcessor],
+      providers: [
+        ProcessTtsProcessor,
+        { provide: getQueueToken('failed-jobs'), useValue: { add: jest.fn() } },
+      ],
     }).compile();
 
     processor = module.get<ProcessTtsProcessor>(ProcessTtsProcessor);
@@ -26,6 +34,13 @@ describe('ProcessTtsProcessor', () => {
 
   describe('handleProcessTts', () => {
     it('should successfully process TTS', async () => {
+      mockJob.data = {
+        text: 'Hello, this is a test',
+        voiceId: 'voice-001',
+        language: 'en',
+        speed: 1.0,
+        sessionId: 'session-123',
+      };
       const result = await processor.handleProcessTts(mockJob as any);
 
       expect(result.success).toBe(true);
@@ -35,6 +50,13 @@ describe('ProcessTtsProcessor', () => {
     });
 
     it('should update progress', async () => {
+      mockJob.data = {
+        text: 'Hello, this is a test',
+        voiceId: 'voice-001',
+        language: 'en',
+        speed: 1.0,
+        sessionId: 'session-123',
+      };
       await processor.handleProcessTts(mockJob as any);
 
       expect(mockJob.progress).toHaveBeenCalledWith(10);
@@ -87,12 +109,26 @@ describe('ProcessTtsProcessor', () => {
     });
 
     it('should include sessionId in result if provided', async () => {
+      mockJob.data = {
+        text: 'Hello, this is a test',
+        voiceId: 'voice-001',
+        language: 'en',
+        speed: 1.0,
+        sessionId: 'session-123',
+      };
       const result = await processor.handleProcessTts(mockJob as any);
 
       expect(result.data.sessionId).toBe('session-123');
     });
 
     it('should include language and speed in result', async () => {
+      mockJob.data = {
+        text: 'Hello, this is a test',
+        voiceId: 'voice-001',
+        language: 'en',
+        speed: 1.0,
+        sessionId: 'session-123',
+      };
       const result = await processor.handleProcessTts(mockJob as any);
 
       expect(result.data.language).toBe('en');
@@ -100,6 +136,13 @@ describe('ProcessTtsProcessor', () => {
     });
 
     it('should generate audioUrl with job id', async () => {
+      mockJob.data = {
+        text: 'Hello, this is a test',
+        voiceId: 'voice-001',
+        language: 'en',
+        speed: 1.0,
+        sessionId: 'session-123',
+      };
       const result = await processor.handleProcessTts(mockJob as any);
 
       expect(result.data.audioUrl).toContain('123');
